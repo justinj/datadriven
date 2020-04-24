@@ -1,36 +1,55 @@
 use std::collections::HashMap;
 use std::env;
-use std::fmt;
 use std::fs;
 use std::result::Result;
-use std::str::from_utf8;
 
 use failure::Error;
 
 #[macro_use]
 extern crate failure;
 
-#[derive(Debug, Fail)]
-pub enum DataDrivenError {
-    /// An error ocurred while parsing.
-    ParseError(String),
-}
-
-impl fmt::Display for DataDrivenError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &DataDrivenError::ParseError(ref m) => write!(f, "{}", m),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
-struct TestCase {
+pub struct TestCase {
+    pub args: HashMap<String, Vec<String>>,
+    pub input: String,
+
     directive_line: String,
     directive: String,
-    args: HashMap<String, Vec<String>>,
     expected: String,
-    input: String,
+}
+
+// TODO: make this recursive?
+pub fn walk<F>(dir: &str, f: F)
+where
+    F: Fn(&mut TestFile),
+{
+    let files = fs::read_dir(dir).unwrap().filter_map(|entry| {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            None
+        } else {
+            Some(String::from(path.to_str().unwrap()))
+        }
+    });
+
+    let mut failures = Vec::new();
+
+    for file in files {
+        let mut tf = TestFile::new(&file).unwrap();
+        f(&mut tf);
+        if let Some(fail) = tf.failure {
+            failures.push(fail);
+        }
+    }
+
+    if failures.len() > 0 {
+        let mut msg = String::new();
+        for f in failures {
+            msg.push_str(&f);
+            msg.push_str("\n");
+        }
+        panic!("{}", msg);
+    }
 }
 
 struct Parser {
@@ -124,7 +143,7 @@ impl Parser {
 }
 
 #[derive(Debug, Clone)]
-struct TestFile {
+pub struct TestFile {
     cases: Vec<TestCase>,
     filename: Option<String>,
 
@@ -132,11 +151,52 @@ struct TestFile {
 }
 
 impl TestFile {
-    fn new(filename: &str) -> Result<Self, Error> {
+    pub fn new(filename: &str) -> Result<Self, Error> {
         let contents = fs::read_to_string(filename)?;
         let mut res = Self::parse(&contents)?;
         res.filename = Some(String::from(filename));
         Ok(res)
+    }
+
+    pub fn run<F>(&mut self, f: F)
+    where
+        F: Fn(&TestCase) -> String,
+    {
+        if env::var("REWRITE").is_err() {
+            for case in &self.cases {
+                let result = f(&case);
+                if result != case.expected {
+                    // TODO: attach things like line numbers here.
+                    self.failure = Some(format!(
+                        "failure:\nexpected: {:?}\nactual:   {:?}",
+                        case.expected, result
+                    ));
+                    // Yeah, ok, we're done here.
+                    break;
+                }
+            }
+        } else {
+            let mut s = String::new();
+            for (i, case) in self.cases.iter().enumerate() {
+                let result = f(&case);
+                let blank_mode = result.contains("\n\n");
+                if i > 0 {
+                    s.push('\n');
+                }
+                s.push_str(&case.directive_line);
+                s.push('\n');
+                s.push_str(&case.input);
+                s.push_str("----\n");
+                if blank_mode {
+                    s.push_str("----\n");
+                }
+                s.push_str(&result);
+                if blank_mode {
+                    s.push_str("----\n----\n");
+                }
+            }
+            fs::write(self.filename.as_ref().unwrap(), s).unwrap();
+        }
     }
 
     fn parse(f: &str) -> Result<Self, Error> {
@@ -162,12 +222,27 @@ impl TestFile {
                 i += 1;
             }
             i += 1;
+            // If there is a second ----, we are in blank-line mode.
+            let blank_mode = i < lines.len() && lines[i] == "----";
+            if blank_mode {
+                i += 1;
+            }
 
             // Then slurp up the expected.
             let mut expected = String::new();
-            // Slurp up everything until we hit a ----
-            // TODO: check for whitespace-only lines
-            while i < lines.len() && lines[i] != "" {
+            while i < lines.len() {
+                if blank_mode {
+                    if lines[i] == "----" {
+                        if i + 1 < lines.len() && lines[i + 1] == "----" {
+                            i += 2;
+                            break;
+                        }
+                    }
+                } else {
+                    if lines[i] == "" {
+                        break;
+                    }
+                }
                 expected.push_str(lines[i]);
                 expected.push('\n');
                 i += 1;
@@ -189,6 +264,8 @@ impl TestFile {
         })
     }
 
+    #[allow(dead_code)]
+    /// Used for testing.
     fn reproduce(&self) -> String {
         let mut s = String::new();
         for case in &self.cases {
@@ -200,96 +277,6 @@ impl TestFile {
             s.push('\n');
         }
         s
-    }
-
-    fn run<F>(&mut self, f: F)
-    where
-        F: Fn(&TestCase) -> String,
-    {
-        if env::var("REWRITE").is_err() {
-            for case in &self.cases {
-                let result = f(&case);
-                if result != case.expected {
-                    // TODO: attach things like line numbers here.
-                    self.failure = Some(format!(
-                        "no good chief: {:?} vs. {:?}",
-                        result, case.expected
-                    ));
-                    // Yeah, ok, we're done here.
-                    break;
-                }
-            }
-        } else {
-            let mut s = String::new();
-            for (i, case) in self.cases.iter().enumerate() {
-                if i > 0 {
-                    s.push('\n');
-                }
-                s.push_str(&case.directive_line);
-                s.push('\n');
-                s.push_str(&case.input);
-                s.push_str("----\n");
-                s.push_str(&f(&case));
-            }
-            fs::write(self.filename.as_ref().unwrap(), s).unwrap();
-        }
-    }
-
-    fn run_rewrite<F>(&self, f: F)
-    where
-        F: Fn(&TestCase) -> String,
-    {
-        let mut s = String::new();
-        for (i, case) in self.cases.iter().enumerate() {
-            if i > 0 {
-                s.push('\n');
-            }
-            s.push_str(&case.directive_line);
-            s.push('\n');
-            s.push_str(&case.input);
-            s.push_str("----\n");
-            s.push_str(&f(&case));
-        }
-        fs::write(self.filename.as_ref().unwrap(), s).unwrap();
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-struct Runner {}
-
-impl Runner {
-    // TODO: make this recursive?
-    fn walk<F>(dir: &str, f: F)
-    where
-        F: Fn(&mut TestFile),
-    {
-        let files = fs::read_dir(dir).unwrap().filter_map(|entry| {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                None
-            } else {
-                Some(String::from(path.to_str().unwrap()))
-            }
-        });
-
-        let mut failures = Vec::new();
-
-        for file in files {
-            let mut tf = TestFile::new(&file).unwrap();
-            f(&mut tf);
-            if let Some(fail) = tf.failure {
-                failures.push(fail);
-            }
-        }
-
-        if failures.len() > 0 {
-            let mut msg = String::new();
-            for f in failures {
-                msg.push_str(&f);
-                msg.push_str("\n");
-            }
-            panic!("{}", msg);
-        }
     }
 }
 
@@ -311,32 +298,5 @@ mod tests {
             let t = TestFile::parse(case).unwrap();
             assert_eq!(t.reproduce(), case);
         }
-    }
-
-    #[test]
-    fn run_1() {
-        let t = TestFile::new("src/testfile").unwrap();
-
-        t.run_rewrite(|s| -> String {
-            let mut result = String::new();
-            result.push_str(&s.input.trim());
-            result.push_str(&s.args.get("append").unwrap()[0]);
-            result.push_str(&s.input.trim());
-            result.push_str("\n");
-            result
-        })
-    }
-
-    #[test]
-    fn run_2() {
-        Runner::walk("src/testdata", |tf| {
-            tf.run(|s| -> String {
-                let mut result = String::new();
-                result.push_str(&s.input.trim());
-                result.push_str(&s.args.get("abc").unwrap()[0]);
-                result.push_str("\n");
-                result
-            })
-        });
     }
 }
