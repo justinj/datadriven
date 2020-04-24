@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env;
 use std::fmt;
 use std::fs;
 use std::result::Result;
@@ -205,17 +206,32 @@ impl TestFile {
     where
         F: Fn(&TestCase) -> String,
     {
-        for case in &self.cases {
-            let result = f(&case);
-            if result != case.expected {
-                // TODO: attach things like line numbers here.
-                self.failure = Some(format!(
-                    "no good chief: {:?} vs. {:?}",
-                    result, case.expected
-                ));
-                // Yeah, ok, we're done here.
-                break;
+        if env::var("REWRITE").is_err() {
+            for case in &self.cases {
+                let result = f(&case);
+                if result != case.expected {
+                    // TODO: attach things like line numbers here.
+                    self.failure = Some(format!(
+                        "no good chief: {:?} vs. {:?}",
+                        result, case.expected
+                    ));
+                    // Yeah, ok, we're done here.
+                    break;
+                }
             }
+        } else {
+            let mut s = String::new();
+            for (i, case) in self.cases.iter().enumerate() {
+                if i > 0 {
+                    s.push('\n');
+                }
+                s.push_str(&case.directive_line);
+                s.push('\n');
+                s.push_str(&case.input);
+                s.push_str("----\n");
+                s.push_str(&f(&case));
+            }
+            fs::write(self.filename.as_ref().unwrap(), s).unwrap();
         }
     }
 
@@ -299,36 +315,6 @@ mod tests {
 
     #[test]
     fn run_1() {
-        let case = "directive\nabc\n----\nabc\nabc\n\n";
-
-        let mut t = TestFile::parse(case).unwrap();
-
-        t.run(|s| -> String {
-            let mut result = String::new();
-            result.push_str(&s.input);
-            result.push_str(&s.input);
-            result
-        })
-    }
-
-    #[test]
-    fn run_2() {
-        let case = "directive append=foo\nabc\n----\nabcfooabc\n\n";
-
-        let mut t = TestFile::parse(case).unwrap();
-
-        t.run(|s| -> String {
-            let mut result = String::new();
-            result.push_str(&s.input.trim());
-            result.push_str(&s.args.get("append").unwrap()[0]);
-            result.push_str(&s.input.trim());
-            result.push_str("\n");
-            result
-        })
-    }
-
-    #[test]
-    fn run_3() {
         let t = TestFile::new("src/testfile").unwrap();
 
         t.run_rewrite(|s| -> String {
@@ -342,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn run_4() {
+    fn run_2() {
         Runner::walk("src/testdata", |tf| {
             tf.run(|s| -> String {
                 let mut result = String::new();
@@ -352,18 +338,5 @@ mod tests {
                 result
             })
         });
-
-        // let mut runner = Runner::new();
-
-        // for file in runner.walk("src/testdata") {
-        //     let t = TestFile::new(&file).unwrap();
-        //     t.run(|s| -> String {
-        //         let mut result = String::new();
-        //         result.push_str(&s.input.trim());
-        //         result.push_str(&s.args.get("abc").unwrap()[0]);
-        //         result.push_str("\n");
-        //         result
-        //     })
-        // }
     }
 }
