@@ -1,0 +1,14 @@
+foo append=bar
+a + 1
+----
+a + 1bara + 1
+
+foo append=baz
+a + 1
+----
+a + 1baza + 1
+
+foo append=bup
+a + 1
+----
+a + 1bupa + 1
