@@ -19,9 +19,9 @@ pub struct TestCase {
 }
 
 // TODO: make this recursive?
-pub fn walk<F>(dir: &str, f: F)
+pub fn walk<F>(dir: &str, mut f: F)
 where
-    F: Fn(&mut TestFile),
+    F: FnMut(&mut TestFile),
 {
     let files = fs::read_dir(dir).unwrap().filter_map(|entry| {
         let path = entry.unwrap().path();
