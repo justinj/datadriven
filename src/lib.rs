@@ -158,9 +158,9 @@ impl TestFile {
         Ok(res)
     }
 
-    pub fn run<F>(&mut self, f: F)
+    pub fn run<F>(&mut self, mut f: F)
     where
-        F: Fn(&TestCase) -> String,
+        F: FnMut(&TestCase) -> String,
     {
         if env::var("REWRITE").is_err() {
             for case in &self.cases {
