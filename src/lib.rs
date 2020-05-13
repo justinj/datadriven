@@ -12,9 +12,9 @@ extern crate failure;
 pub struct TestCase {
     pub args: HashMap<String, Vec<String>>,
     pub input: String,
+    pub directive: String,
 
     directive_line: String,
-    directive: String,
     expected: String,
 }
 
