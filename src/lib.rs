@@ -220,7 +220,11 @@ impl TestFile {
 
     fn parse(f: &str) -> Result<Self, Error> {
         let mut cases = vec![];
-        let lines: Vec<&str> = f.lines().collect();
+        // TODO(justin): hacky implementation of comments
+        let lines: Vec<String> = f
+            .lines()
+            .map(|l| l.chars().take_while(|c| *c != '#').collect())
+            .collect();
         let mut i = 0;
         while i < lines.len() {
             if lines[i].trim() == "" {
@@ -230,8 +234,8 @@ impl TestFile {
 
             let line_number = i;
 
-            let mut parser = Parser::new(lines[i]);
-            let directive_line = String::from(lines[i]);
+            let mut parser = Parser::new(lines[i].as_str());
+            let directive_line = lines[i].clone();
             let (directive, args) = match parser.parse_directive() {
                 Ok(result) => result,
                 Err(err) => bail!("{}: {}", i + 1, err),
@@ -241,7 +245,7 @@ impl TestFile {
             let mut input = String::new();
             // Slurp up everything until we hit a ----
             while i < lines.len() && lines[i] != "----" {
-                input.push_str(lines[i]);
+                input.push_str(lines[i].as_str());
                 input.push('\n');
                 i += 1;
             }
@@ -267,7 +271,7 @@ impl TestFile {
                         break;
                     }
                 }
-                expected.push_str(lines[i]);
+                expected.push_str(lines[i].as_str());
                 expected.push('\n');
                 i += 1;
             }
