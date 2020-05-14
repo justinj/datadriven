@@ -16,6 +16,7 @@ pub struct TestCase {
 
     directive_line: String,
     expected: String,
+    line_number: usize,
 }
 
 // TODO: make this recursive?
@@ -71,8 +72,12 @@ impl Parser {
         }
     }
 
-    fn peek(&mut self) -> char {
-        self.chars[self.idx]
+    fn peek(&mut self) -> Option<char> {
+        if self.idx >= self.chars.len() {
+            None
+        } else {
+            Some(self.chars[self.idx])
+        }
     }
 
     fn is_wordchar(ch: char) -> bool {
@@ -81,7 +86,7 @@ impl Parser {
 
     fn parse_word(&mut self) -> Result<String, Error> {
         let start = self.idx;
-        while self.idx < self.chars.len() && Self::is_wordchar(self.peek()) {
+        while self.peek().map_or(false, Self::is_wordchar) {
             self.idx += 1;
         }
         if self.idx == start {
@@ -103,20 +108,20 @@ impl Parser {
     }
 
     fn parse_vals(&mut self) -> Result<Vec<String>, Error> {
-        if self.peek() != '=' {
+        if self.peek() != Some('=') {
             return Ok(Vec::new());
         }
         self.idx += 1;
         self.munch();
-        if self.peek() != '(' {
+        if self.peek() != Some('(') {
             return Ok(vec![self.parse_word()?]);
         }
         self.idx += 1;
         self.munch();
         let mut vals = Vec::new();
-        while self.peek() != ')' {
+        while self.peek() != Some(')') {
             vals.push(self.parse_word()?);
-            if self.peek() != ',' {
+            if self.peek() != Some(',') {
                 break;
             }
             self.idx += 1;
@@ -147,13 +152,17 @@ pub struct TestFile {
     cases: Vec<TestCase>,
     filename: Option<String>,
 
+    // failure gets set if a test failed during execution.
     failure: Option<String>,
 }
 
 impl TestFile {
     pub fn new(filename: &str) -> Result<Self, Error> {
         let contents = fs::read_to_string(filename)?;
-        let mut res = Self::parse(&contents)?;
+        let mut res = match Self::parse(&contents) {
+            Ok(res) => res,
+            Err(err) => bail!("{}:{}", filename, err),
+        };
         res.filename = Some(String::from(filename));
         Ok(res)
     }
@@ -168,8 +177,14 @@ impl TestFile {
                 if result != case.expected {
                     // TODO: attach things like line numbers here.
                     self.failure = Some(format!(
-                        "failure:\nexpected: {:?}\nactual:   {:?}",
-                        case.expected, result
+                        "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
+                        self.filename
+                            .as_ref()
+                            .unwrap_or(&"<unknown file>".to_string()),
+                        case.line_number,
+                        case.input,
+                        case.expected,
+                        result
                     ));
                     // Yeah, ok, we're done here.
                     break;
@@ -204,14 +219,19 @@ impl TestFile {
         let lines: Vec<&str> = f.lines().collect();
         let mut i = 0;
         while i < lines.len() {
-            if lines[i] == "" {
+            if lines[i].trim() == "" {
                 i += 1;
                 continue;
             }
 
+            let line_number = i;
+
             let mut parser = Parser::new(lines[i]);
             let directive_line = String::from(lines[i]);
-            let (directive, args) = parser.parse_directive()?;
+            let (directive, args) = match parser.parse_directive() {
+                Ok(result) => result,
+                Err(err) => bail!("{}: {}", i + 1, err),
+            };
 
             i += 1;
             let mut input = String::new();
@@ -254,6 +274,7 @@ impl TestFile {
                 input,
                 args,
                 expected,
+                line_number,
             });
             i += 1;
         }
