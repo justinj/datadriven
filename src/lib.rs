@@ -81,7 +81,11 @@ impl Parser {
     }
 
     fn is_wordchar(ch: char) -> bool {
-        ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9'
+        ch >= 'a' && ch <= 'z'
+            || ch >= 'A' && ch <= 'Z'
+            || ch >= '0' && ch <= '9'
+            || ch == '-'
+            || ch == '_'
     }
 
     fn parse_word(&mut self) -> Result<String, Error> {
