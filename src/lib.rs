@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fs;
 use std::result::Result;
@@ -8,6 +8,7 @@ use failure::Error;
 #[macro_use]
 extern crate failure;
 
+/// A single test case within a file.
 #[derive(Debug, Clone)]
 pub struct TestCase {
     /// The header for a test that denotes what kind of test is being run.
@@ -27,19 +28,10 @@ pub fn walk<F>(dir: &str, mut f: F)
 where
     F: FnMut(&mut TestFile),
 {
-    let files = fs::read_dir(dir).unwrap().filter_map(|entry| {
-        let path = entry.unwrap().path();
-        if path.is_dir() {
-            None
-        } else {
-            Some(String::from(path.to_str().unwrap()))
-        }
-    });
-
     // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
     let mut failures = Vec::new();
 
-    for file in files {
+    for file in walk_recursive(dir).unwrap() {
         let mut tf = TestFile::new(&file).unwrap();
         f(&mut tf);
         if let Some(fail) = tf.failure {
@@ -57,13 +49,31 @@ where
     }
 }
 
-// Parses a directive line of the form
-// <directive> {arg={<value>|(<value>[, <value>]*)}}*
-// Examples:
-//   hello                 => directive: "hello", no arguments
-//   hello world           => directive: "hello", world=[]
-//   hello world=foo       => directive: "hello", world=[foo]
-//   hello world=(foo,bar) => directive: "hello", world=[foo,bar]
+// Extracts all the non-directory children of dir. Not defensive against cycles!
+fn walk_recursive(dir: &str) -> Result<Vec<String>, Error> {
+    let mut q = VecDeque::new();
+    q.push_back(dir.to_string());
+    let mut res = vec![];
+    while let Some(hd) = q.pop_front() {
+        for entry in fs::read_dir(hd)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                q.push_back(path.to_str().unwrap().to_string());
+            } else {
+                res.push(path.to_str().unwrap().to_string());
+            }
+        }
+    }
+    Ok(res)
+}
+
+/// Parses a directive line of the form
+/// <directive> {arg={<value>|(<value>[,<value>]*)}}*
+/// Examples:
+///   hello                 => directive: "hello", no arguments
+///   hello world           => directive: "hello", world=[]
+///   hello world=foo       => directive: "hello", world=[foo]
+///   hello world=(foo,bar) => directive: "hello", world=[foo,bar]
 struct DirectiveParser {
     chars: Vec<char>,
     idx: usize,
@@ -77,8 +87,10 @@ impl DirectiveParser {
         }
     }
 
+    // Consume characters until we reach the end of the directive or hit a non-whitespace
+    // character.
     fn munch(&mut self) {
-        while self.idx < self.chars.len() && self.chars[self.idx] == ' ' {
+        while self.idx < self.chars.len() && self.chars[self.idx].is_ascii_whitespace() {
             self.idx += 1;
         }
     }
@@ -91,16 +103,13 @@ impl DirectiveParser {
         }
     }
 
+    // If the next char is `ch`, consume it and return true. Otherwise, return false.
     fn eat(&mut self, ch: char) -> bool {
-        if self.idx >= self.chars.len() {
-            false
+        if self.idx < self.chars.len() && self.chars[self.idx] == ch {
+            self.idx += 1;
+            true
         } else {
-            if self.chars[self.idx] == ch {
-                self.idx += 1;
-                true
-            } else {
-                false
-            }
+            false
         }
     }
 
@@ -112,15 +121,15 @@ impl DirectiveParser {
             || ch == '_'
     }
 
-    fn parse_word(&mut self, ctx: &str) -> Result<String, Error> {
+    fn parse_word(&mut self, context: &str) -> Result<String, Error> {
         let start = self.idx;
         while self.peek().map_or(false, Self::is_wordchar) {
             self.idx += 1;
         }
         if self.idx == start {
             match self.peek() {
-                Some(ch) => bail!("expected {}, got {}", ctx, ch),
-                None => bail!("expected {} but directive line ended", ctx),
+                Some(ch) => bail!("expected {}, got {}", context, ch),
+                None => bail!("expected {} but directive line ended", context),
             }
         }
         let result = self.chars[start..self.idx].into_iter().collect();
@@ -138,7 +147,7 @@ impl DirectiveParser {
         Ok((name, vals))
     }
 
-    // Parses an argument value including the leading `=`.
+    // Parses an argument value, including the leading `=`.
     fn parse_vals(&mut self) -> Result<Vec<String>, Error> {
         if !self.eat('=') {
             return Ok(Vec::new());
@@ -195,7 +204,9 @@ pub struct TestFile {
     stanzas: Vec<Stanza>,
     filename: Option<String>,
 
-    // failure gets set if a test failed during execution.
+    // failure gets set if a test failed during execution. We can't just return an error when that
+    // happens, since the user is calling `run` from a closure, so we have to buffer up a failure
+    // to be processed later (by `walk`).
     failure: Option<String>,
 }
 
@@ -311,7 +322,7 @@ impl TestFile {
 
             i += 1;
             let mut input = String::new();
-            // Slurp up everything until we hit a ----
+            // Slurp up everything as the input until we hit a ----
             while i < lines.len() && lines[i] != "----" {
                 input.push_str(lines[i]);
                 input.push('\n');
@@ -328,6 +339,12 @@ impl TestFile {
             let mut expected = String::new();
             while i < lines.len() {
                 if blank_mode {
+                    if i + 1 >= lines.len() {
+                        bail!(
+                            "unclosed double-separator block for test case starting at line {}",
+                            line_number,
+                        );
+                    }
                     if lines[i] == "----" {
                         if i + 1 < lines.len() && lines[i + 1] == "----" {
                             i += 2;
@@ -335,7 +352,7 @@ impl TestFile {
                         }
                     }
                 } else {
-                    if lines[i] == "" {
+                    if lines[i].trim() == "" {
                         break;
                     }
                 }
@@ -346,7 +363,7 @@ impl TestFile {
 
             stanzas.push(Stanza::Test(TestCase {
                 directive_line: directive_line,
-                directive: String::from(directive),
+                directive: directive.to_string(),
                 input,
                 args,
                 expected,
@@ -369,6 +386,7 @@ impl TestFile {
 mod tests {
     use super::*;
 
+    // That's dogfooding baby!
     #[test]
     fn parse_directive() {
         walk("tests/parsing", |f| {

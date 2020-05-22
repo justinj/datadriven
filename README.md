@@ -38,7 +38,7 @@ mod tests {
             f.run(|test_case| -> String {
                 // Do something with `s` and return it.
                 test_case.input.to_string()
-                
+
                 // Can access the directive via `test_case.directive`.
             })
         });
@@ -70,7 +70,7 @@ bar
 
 ## Arguments
 
-Strings can be passed as arguments to tests.
+Strings can be passed as arguments to tests in a directive line.
 
 ```
 render a=world
@@ -81,7 +81,7 @@ hello world
 
 Arguments can be accessed from the `args` field on `TestCase`.
 
-They are actually lists of strings:
+They are actually `Vec`s of strings:
 
 ```
 render a=(one,two)
