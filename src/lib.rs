@@ -10,16 +10,19 @@ extern crate failure;
 
 #[derive(Debug, Clone)]
 pub struct TestCase {
-    pub args: HashMap<String, Vec<String>>,
-    pub input: String,
+    /// The header for a test that denotes what kind of test is being run.
     pub directive: String,
+    /// Any arguments that have been declared after the directive.
+    pub args: HashMap<String, Vec<String>>,
+    /// The input to the test.
+    pub input: String,
 
     directive_line: String,
     expected: String,
     line_number: usize,
 }
 
-// TODO: make this recursive?
+/// Walk a directory for test files and run each one as a test.
 pub fn walk<F>(dir: &str, mut f: F)
 where
     F: FnMut(&mut TestFile),
@@ -33,6 +36,7 @@ where
         }
     });
 
+    // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
     let mut failures = Vec::new();
 
     for file in files {
@@ -53,14 +57,21 @@ where
     }
 }
 
-struct Parser {
+// Parses a directive line of the form
+// <directive> {arg={<value>|(<value>[, <value>]*)}}*
+// Examples:
+//   hello                 => directive: "hello", no arguments
+//   hello world           => directive: "hello", world=[]
+//   hello world=foo       => directive: "hello", world=[foo]
+//   hello world=(foo,bar) => directive: "hello", world=[foo,bar]
+struct DirectiveParser {
     chars: Vec<char>,
     idx: usize,
 }
 
-impl Parser {
+impl DirectiveParser {
     fn new(s: &str) -> Self {
-        Parser {
+        DirectiveParser {
             chars: s.chars().collect(),
             idx: 0,
         }
@@ -80,6 +91,19 @@ impl Parser {
         }
     }
 
+    fn eat(&mut self, ch: char) -> bool {
+        if self.idx >= self.chars.len() {
+            false
+        } else {
+            if self.chars[self.idx] == ch {
+                self.idx += 1;
+                true
+            } else {
+                false
+            }
+        }
+    }
+
     fn is_wordchar(ch: char) -> bool {
         ch >= 'a' && ch <= 'z'
             || ch >= 'A' && ch <= 'Z'
@@ -88,13 +112,16 @@ impl Parser {
             || ch == '_'
     }
 
-    fn parse_word(&mut self) -> Result<String, Error> {
+    fn parse_word(&mut self, ctx: &str) -> Result<String, Error> {
         let start = self.idx;
         while self.peek().map_or(false, Self::is_wordchar) {
             self.idx += 1;
         }
         if self.idx == start {
-            bail!("expected word");
+            match self.peek() {
+                Some(ch) => bail!("expected {}, got {}", ctx, ch),
+                None => bail!("expected {} but directive line ended", ctx),
+            }
         }
         let result = self.chars[start..self.idx].into_iter().collect();
         self.munch();
@@ -106,30 +133,34 @@ impl Parser {
     }
 
     fn parse_arg(&mut self) -> Result<(String, Vec<String>), Error> {
-        let name = self.parse_word()?;
+        let name = self.parse_word("argument name")?;
         let vals = self.parse_vals()?;
         Ok((name, vals))
     }
 
+    // Parses an argument value including the leading `=`.
     fn parse_vals(&mut self) -> Result<Vec<String>, Error> {
-        if self.peek() != Some('=') {
+        if !self.eat('=') {
             return Ok(Vec::new());
         }
-        self.idx += 1;
         self.munch();
-        if self.peek() != Some('(') {
-            return Ok(vec![self.parse_word()?]);
+        if !self.eat('(') {
+            // If there's no leading paren, we parse a single argument as a singleton list.
+            return Ok(vec![self.parse_word("argument value")?]);
         }
-        self.idx += 1;
         self.munch();
         let mut vals = Vec::new();
         while self.peek() != Some(')') {
-            vals.push(self.parse_word()?);
-            if self.peek() != Some(',') {
+            vals.push(self.parse_word("argument value")?);
+            if !self.eat(',') {
                 break;
             }
-            self.idx += 1;
             self.munch();
+        }
+        match self.peek() {
+            Some(')') => {}
+            Some(ch) => bail!("expected ',' or ')', got '{}'", ch),
+            None => bail!("expected ',' or ')', but directive line ended"),
         }
         self.idx += 1;
         self.munch();
@@ -138,7 +169,7 @@ impl Parser {
 
     fn parse_directive(&mut self) -> Result<(String, HashMap<String, Vec<String>>), Error> {
         self.munch();
-        let directive = self.parse_word()?;
+        let directive = self.parse_word("directive")?;
         let mut args = HashMap::new();
         while !self.at_end() {
             let (arg_name, arg_vals) = self.parse_arg()?;
@@ -151,9 +182,17 @@ impl Parser {
     }
 }
 
+// A stanza is some logical chunk of a test file. We need to remember the comments and not just
+// skip over them since we need to reproduce them when we rewrite.
+#[derive(Debug, Clone)]
+enum Stanza {
+    Test(TestCase),
+    Comment(String),
+}
+
 #[derive(Debug, Clone)]
 pub struct TestFile {
-    cases: Vec<TestCase>,
+    stanzas: Vec<Stanza>,
     filename: Option<String>,
 
     // failure gets set if a test failed during execution.
@@ -161,7 +200,7 @@ pub struct TestFile {
 }
 
 impl TestFile {
-    pub fn new(filename: &str) -> Result<Self, Error> {
+    fn new(filename: &str) -> Result<Self, Error> {
         let contents = fs::read_to_string(filename)?;
         let mut res = match Self::parse(&contents) {
             Ok(res) => res,
@@ -171,72 +210,99 @@ impl TestFile {
         Ok(res)
     }
 
-    pub fn run<F>(&mut self, mut f: F)
+    /// Run each test in this file in sequence by calling `f` on it. If any test fails, execution
+    /// halts. If the REWRITE environment variable is set, it will rewrite each file as it
+    /// processes it.
+    pub fn run<F>(&mut self, f: F)
     where
         F: FnMut(&TestCase) -> String,
     {
-        if env::var("REWRITE").is_err() {
-            for case in &self.cases {
-                let result = f(&case);
-                if result != case.expected {
-                    // TODO: attach things like line numbers here.
-                    self.failure = Some(format!(
-                        "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
-                        self.filename
-                            .as_ref()
-                            .unwrap_or(&"<unknown file>".to_string()),
-                        case.line_number,
-                        case.input,
-                        case.expected,
-                        result
-                    ));
-                    // Yeah, ok, we're done here.
-                    break;
-                }
-            }
-        } else {
-            let mut s = String::new();
-            for (i, case) in self.cases.iter().enumerate() {
-                let result = f(&case);
-                let blank_mode = result.contains("\n\n");
-                if i > 0 {
-                    s.push('\n');
-                }
-                s.push_str(&case.directive_line);
-                s.push('\n');
-                s.push_str(&case.input);
-                s.push_str("----\n");
-                if blank_mode {
-                    s.push_str("----\n");
-                }
-                s.push_str(&result);
-                if blank_mode {
-                    s.push_str("----\n----\n");
-                }
-            }
-            fs::write(self.filename.as_ref().unwrap(), s).unwrap();
+        match env::var("REWRITE") {
+            Ok(_) => self.run_rewrite(f),
+            Err(_) => self.run_normal(f),
         }
     }
 
+    fn run_normal<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&TestCase) -> String,
+    {
+        for stanza in &self.stanzas {
+            match stanza {
+                Stanza::Test(case) => {
+                    let result = f(&case);
+                    if result != case.expected {
+                        self.failure = Some(format!(
+                            "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
+                            self.filename
+                                .as_ref()
+                                .unwrap_or(&"<unknown file>".to_string()),
+                            case.line_number,
+                            case.input,
+                            case.expected,
+                            result
+                        ));
+                        // Yeah, ok, we're done here.
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn run_rewrite<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&TestCase) -> String,
+    {
+        let mut s = String::new();
+        for stanza in &self.stanzas {
+            match stanza {
+                Stanza::Test(case) => {
+                    let result = f(&case);
+                    let blank_mode = result.contains("\n\n");
+                    s.push_str(&case.directive_line);
+                    s.push('\n');
+                    s.push_str(&case.input);
+                    s.push_str("----\n");
+                    if blank_mode {
+                        s.push_str("----\n");
+                    }
+                    s.push_str(&result);
+                    if blank_mode {
+                        s.push_str("----\n----\n");
+                    }
+                }
+                Stanza::Comment(c) => {
+                    s.push_str(&c);
+                    s.push('\n');
+                }
+            }
+        }
+        // TODO(justin): surface these errors somehow?
+        fs::write(self.filename.as_ref().unwrap(), s).unwrap();
+    }
+
     fn parse(f: &str) -> Result<Self, Error> {
-        let mut cases = vec![];
+        let mut stanzas = vec![];
         let lines: Vec<&str> = f.lines().collect();
         let mut i = 0;
         while i < lines.len() {
+            // TODO(justin): hacky implementation of comments
             let line = lines[i]
                 .chars()
                 .take_while(|c| *c != '#')
                 .collect::<String>();
 
-            // TODO(justin): hacky implementation of comments
             if line.trim() == "" {
+                stanzas.push(Stanza::Comment(lines[i].to_string()));
                 i += 1;
                 continue;
             }
 
             let line_number = i;
 
-            let mut parser = Parser::new(&line);
+            let mut parser = DirectiveParser::new(&line);
             let directive_line = lines[i].to_string();
             let (directive, args) = match parser.parse_directive() {
                 Ok(result) => result,
@@ -278,36 +344,24 @@ impl TestFile {
                 i += 1;
             }
 
-            cases.push(TestCase {
+            stanzas.push(Stanza::Test(TestCase {
                 directive_line: directive_line,
                 directive: String::from(directive),
                 input,
                 args,
                 expected,
                 line_number,
-            });
+            }));
             i += 1;
+            if i < lines.len() {
+                stanzas.push(Stanza::Comment("".to_string()));
+            }
         }
         Ok(TestFile {
-            cases: cases,
+            stanzas,
             filename: None,
             failure: None,
         })
-    }
-
-    #[allow(dead_code)]
-    /// Used for testing.
-    fn reproduce(&self) -> String {
-        let mut s = String::new();
-        for case in &self.cases {
-            s.push_str(&case.directive_line);
-            s.push('\n');
-            s.push_str(&case.input);
-            s.push_str("----\n");
-            s.push_str(&case.expected);
-            s.push('\n');
-        }
-        s
     }
 }
 
@@ -316,18 +370,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reproduction() {
-        let cases = vec![
-            "directive\n----\nexpected\n\n",
-            "directive\n----\nexpected\n\nd2\n----\ncontents\n\n",
-            "directive\n----\nexpected\n\nd2\n----\n\n",
-            "directive\ninput\n----\nexpected\n\n",
-            "directive foo=bar\ninput\n----\nexpected\n\n",
-        ];
-
-        for case in cases {
-            let t = TestFile::parse(case).unwrap();
-            assert_eq!(t.reproduce(), case);
-        }
+    fn parse_directive() {
+        walk("tests/parsing", |f| {
+            f.run(|s| -> String {
+                match DirectiveParser::new(&s.input.trim()).parse_directive() {
+                    Ok((directive, mut args)) => {
+                        let mut sorted_args = args.drain().collect::<Vec<(String, Vec<String>)>>();
+                        sorted_args.sort_by(|a, b| a.0.cmp(&b.0));
+                        format!("directive: {}\nargs: {:?}\n", directive, sorted_args)
+                    }
+                    Err(err) => format!("error: {}\n", err),
+                }
+            });
+        });
     }
 }

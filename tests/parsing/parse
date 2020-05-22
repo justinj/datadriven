@@ -1,0 +1,100 @@
+parse-directive
+hello
+----
+directive: hello
+args: []
+
+parse-directive
+hello foo=bar
+----
+directive: hello
+args: [("foo", ["bar"])]
+
+parse-directive
+hello foo=(bar,baz)
+----
+directive: hello
+args: [("foo", ["bar", "baz"])]
+
+parse-directive
+hello foo=foo1 bar=bar1
+----
+directive: hello
+args: [("bar", ["bar1"]), ("foo", ["foo1"])]
+
+parse-directive
+hello foo=(foo1,bar) bar=bar1
+----
+directive: hello
+args: [("bar", ["bar1"]), ("foo", ["foo1", "bar"])]
+
+parse-directive
+hello foo=()
+----
+directive: hello
+args: [("foo", [])]
+
+parse-directive
+hello foo
+----
+directive: hello
+args: [("foo", [])]
+
+parse-directive
+hello 123
+----
+directive: hello
+args: [("123", [])]
+
+parse-directive
+hello 123=(1,2,3) 456=(4   ,  5,    6)
+----
+directive: hello
+args: [("123", ["1", "2", "3"]), ("456", ["4", "5", "6"])]
+
+# Error cases.
+
+parse-directive
+hello foo=(
+----
+error: expected argument value but directive line ended
+
+parse-directive
+hello foo=((
+----
+error: expected argument value, got (
+
+parse-directive
+hello foo=(bar
+----
+error: expected ',' or ')', but directive line ended
+
+parse-directive
+hello foo=(bar(
+----
+error: expected ',' or ')', got '('
+
+parse-directive
+hello foo=)
+----
+error: expected argument value, got )
+
+parse-directive
+hello <
+----
+error: expected argument name, got <
+
+parse-directive
+>
+----
+error: expected directive, got >
+
+parse-directive
+hello foo>bar
+----
+error: expected argument name, got >
+
+parse-directive
+hello foo=1 foo=2
+----
+error: duplicate argument: foo
