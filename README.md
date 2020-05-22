@@ -16,9 +16,9 @@ eval
 2
 ```
 
-* `eval` here is called the "directive," which describes what kind of test is
+* `eval` here is the directive, which describes what kind of test is
 being run.
-* `1 + 1` is the _input_.
+* `1 + 1` is the input.
 * `----` is the separator between input and output.
 * `2` is the expected output.
 
