@@ -39,7 +39,7 @@ where
         }
     }
 
-    if failures.len() > 0 {
+    if !failures.is_empty() {
         let mut msg = String::new();
         for f in failures {
             msg.push_str(&f);
@@ -132,7 +132,7 @@ impl DirectiveParser {
                 None => bail!("expected {} but directive line ended", context),
             }
         }
-        let result = self.chars[start..self.idx].into_iter().collect();
+        let result = self.chars[start..self.idx].iter().collect();
         self.munch();
         Ok(result)
     }
@@ -239,25 +239,22 @@ impl TestFile {
         F: FnMut(&TestCase) -> String,
     {
         for stanza in &self.stanzas {
-            match stanza {
-                Stanza::Test(case) => {
-                    let result = f(&case);
-                    if result != case.expected {
-                        self.failure = Some(format!(
-                            "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
-                            self.filename
-                                .as_ref()
-                                .unwrap_or(&"<unknown file>".to_string()),
-                            case.line_number,
-                            case.input,
-                            case.expected,
-                            result
-                        ));
-                        // Yeah, ok, we're done here.
-                        break;
-                    }
+            if let Stanza::Test(case) = stanza {
+                let result = f(&case);
+                if result != case.expected {
+                    self.failure = Some(format!(
+                        "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
+                        self.filename
+                            .as_ref()
+                            .unwrap_or(&"<unknown file>".to_string()),
+                        case.line_number,
+                        case.input,
+                        case.expected,
+                        result
+                    ));
+                    // Yeah, ok, we're done here.
+                    break;
                 }
-                _ => {}
             }
         }
     }
@@ -345,16 +342,12 @@ impl TestFile {
                             line_number,
                         );
                     }
-                    if lines[i] == "----" {
-                        if i + 1 < lines.len() && lines[i + 1] == "----" {
-                            i += 2;
-                            break;
-                        }
-                    }
-                } else {
-                    if lines[i].trim() == "" {
+                    if i + 1 < lines.len() && lines[i] == "----" && lines[i + 1] == "----" {
+                        i += 2;
                         break;
                     }
+                } else if lines[i].trim() == "" {
+                    break;
                 }
                 expected.push_str(lines[i]);
                 expected.push('\n');
@@ -362,7 +355,7 @@ impl TestFile {
             }
 
             stanzas.push(Stanza::Test(TestCase {
-                directive_line: directive_line,
+                directive_line,
                 directive: directive.to_string(),
                 input,
                 args,
