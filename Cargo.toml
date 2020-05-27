@@ -3,6 +3,11 @@ name = "datadriven"
 version = "0.1.0"
 authors = ["Justin Jaffray <justin.jaffray@gmail.com>"]
 edition = "2018"
+license = "Apache-2.0"
+description = "Rewritable table-driven testing"
+repository = "https://github.com/justinj/datadriven"
+homepage = "https://github.com/justinj/datadriven"
+readme = "README.md"
 
 [dependencies]
 failure = "0.1.7"
