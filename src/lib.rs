@@ -3,10 +3,7 @@ use std::env;
 use std::fs;
 use std::result::Result;
 
-use failure::Error;
-
-#[macro_use]
-extern crate failure;
+use anyhow::{bail, Context, Error};
 
 /// A single test case within a file.
 #[derive(Debug, Clone)]
@@ -212,7 +209,8 @@ pub struct TestFile {
 
 impl TestFile {
     fn new(filename: &str) -> Result<Self, Error> {
-        let contents = fs::read_to_string(filename)?;
+        let contents = fs::read_to_string(filename)
+            .with_context(|| format!("error reading file {}", filename))?;
         let mut res = match Self::parse(&contents) {
             Ok(res) => res,
             Err(err) => bail!("{}:{}", filename, err),

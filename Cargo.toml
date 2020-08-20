@@ -10,4 +10,4 @@ homepage = "https://github.com/justinj/datadriven"
 readme = "README.md"
 
 [dependencies]
-failure = "0.1.7"
+anyhow = "1.0"
