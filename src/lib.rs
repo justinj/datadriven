@@ -28,7 +28,7 @@ where
     // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
     let mut failures = Vec::new();
 
-    for file in walk_recursive(dir).unwrap() {
+    for file in test_files(dir).unwrap() {
         let mut tf = TestFile::new(&file).unwrap();
         f(&mut tf);
         if let Some(fail) = tf.failure {
@@ -46,8 +46,13 @@ where
     }
 }
 
+// Ignore files named .XXX, XXX~ or #XXX#.
+fn should_ignore_file(name: &str) -> bool {
+    name.starts_with(".") || name.ends_with("~") || name.starts_with("#") && name.ends_with("#")
+}
+
 // Extracts all the non-directory children of dir. Not defensive against cycles!
-fn walk_recursive(dir: &str) -> Result<Vec<String>, Error> {
+fn test_files(dir: &str) -> Result<Vec<String>, Error> {
     let mut q = VecDeque::new();
     q.push_back(dir.to_string());
     let mut res = vec![];
@@ -57,7 +62,9 @@ fn walk_recursive(dir: &str) -> Result<Vec<String>, Error> {
             if path.is_dir() {
                 q.push_back(path.to_str().unwrap().to_string());
             } else {
-                res.push(path.to_str().unwrap().to_string());
+                if !should_ignore_file(path.file_name().unwrap().to_str().unwrap()) {
+                    res.push(path.to_str().unwrap().to_string());
+                }
             }
         }
     }
