@@ -1,9 +1,9 @@
 [package]
 name = "datadriven"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Justin Jaffray <justin.jaffray@gmail.com>"]
 edition = "2018"
-license-file = "LICENSE"
+license = "Apache-2.0"
 description = "Rewritable table-driven testing"
 repository = "https://github.com/justinj/datadriven"
 homepage = "https://github.com/justinj/datadriven"
