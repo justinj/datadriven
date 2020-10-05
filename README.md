@@ -47,14 +47,19 @@ mod tests {
 ```
 
 The closure passed to `walk` will be evaluated for each file in the given
-directory, and the closure passed to `f.run` will be evaluated for each test
-case in that file.
+directory (or just a single file), and the closure passed to `f.run` will be
+evaluated for each test case in that file.
 Test cases can share state by closing over values in the `walk` closure.
 
 ## Rewriting
 
 If the env var `REWRITE` is set, the results will all be rewritten to match the
 expectation.
+
+## Running specific tests
+
+If the env var `RUN` is set, its value will be appended to the directory passed
+to `walk`.
 
 ## Multiline output
 
