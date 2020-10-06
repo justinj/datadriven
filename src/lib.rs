@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fs;
+use std::path::PathBuf;
 use std::result::Result;
 
 use anyhow::{bail, Context, Error};
@@ -25,15 +26,28 @@ pub fn walk<F>(dir: &str, mut f: F)
 where
     F: FnMut(&mut TestFile),
 {
+    let mut file_prefix = PathBuf::from(dir);
+    if let Ok(p) = env::var("RUN") {
+        file_prefix = file_prefix.join(p);
+    }
+
     // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
     let mut failures = Vec::new();
 
-    for file in test_files(dir).unwrap() {
+    let mut run = |file| {
         let mut tf = TestFile::new(&file).unwrap();
         f(&mut tf);
         if let Some(fail) = tf.failure {
             failures.push(fail);
         }
+    };
+
+    if file_prefix.is_dir() {
+        for file in test_files(PathBuf::from(dir)).unwrap() {
+            run(file);
+        }
+    } else if file_prefix.exists() {
+        run(file_prefix);
     }
 
     if !failures.is_empty() {
@@ -48,23 +62,21 @@ where
 
 // Ignore files named .XXX, XXX~ or #XXX#.
 fn should_ignore_file(name: &str) -> bool {
-    name.starts_with(".") || name.ends_with("~") || name.starts_with("#") && name.ends_with("#")
+    name.starts_with('.') || name.ends_with('~') || name.starts_with('#') && name.ends_with('#')
 }
 
 // Extracts all the non-directory children of dir. Not defensive against cycles!
-fn test_files(dir: &str) -> Result<Vec<String>, Error> {
+fn test_files(dir: PathBuf) -> Result<Vec<PathBuf>, Error> {
     let mut q = VecDeque::new();
-    q.push_back(dir.to_string());
+    q.push_back(dir);
     let mut res = vec![];
     while let Some(hd) = q.pop_front() {
         for entry in fs::read_dir(hd)? {
             let path = entry?.path();
             if path.is_dir() {
-                q.push_back(path.to_str().unwrap().to_string());
-            } else {
-                if !should_ignore_file(path.file_name().unwrap().to_str().unwrap()) {
-                    res.push(path.to_str().unwrap().to_string());
-                }
+                q.push_back(path);
+            } else if !should_ignore_file(path.file_name().unwrap().to_str().unwrap()) {
+                res.push(path);
             }
         }
     }
@@ -215,14 +227,14 @@ pub struct TestFile {
 }
 
 impl TestFile {
-    fn new(filename: &str) -> Result<Self, Error> {
+    fn new(filename: &PathBuf) -> Result<Self, Error> {
         let contents = fs::read_to_string(filename)
-            .with_context(|| format!("error reading file {}", filename))?;
+            .with_context(|| format!("error reading file {}", filename.display()))?;
         let mut res = match Self::parse(&contents) {
             Ok(res) => res,
-            Err(err) => bail!("{}:{}", filename, err),
+            Err(err) => bail!("{}:{}", filename.display(), err),
         };
-        res.filename = Some(String::from(filename));
+        res.filename = Some(filename.to_string_lossy().to_string());
         Ok(res)
     }
 
