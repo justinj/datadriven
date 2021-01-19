@@ -325,7 +325,8 @@ impl TestFile {
                 continue;
             }
 
-            let line_number = i;
+            // Lines in text files are traditionally one-indexed.
+            let line_number = i + 1;
 
             let mut parser = DirectiveParser::new(&line);
             let directive_line = lines[i].to_string();
