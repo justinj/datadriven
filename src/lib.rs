@@ -135,6 +135,7 @@ impl DirectiveParser {
             || ch >= '0' && ch <= '9'
             || ch == '-'
             || ch == '_'
+            || ch == '.'
     }
 
     fn parse_word(&mut self, context: &str) -> Result<String, Error> {
