@@ -9,5 +9,13 @@ repository = "https://github.com/justinj/datadriven"
 homepage = "https://github.com/justinj/datadriven"
 readme = "README.md"
 
+[features]
+default = ["async"]
+async = ["futures"]
+
 [dependencies]
 anyhow = "1.0"
+futures = { version = "0.3", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.7", features = ["macros", "rt"] }

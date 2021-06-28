@@ -6,6 +6,9 @@ use std::result::Result;
 
 use anyhow::{bail, Context, Error};
 
+#[cfg(feature = "async")]
+use futures::future::Future;
+
 /// A single test case within a file.
 #[derive(Debug, Clone)]
 pub struct TestCase {
@@ -391,6 +394,120 @@ impl TestFile {
             filename: None,
             failure: None,
         })
+    }
+}
+
+/// The async equivalent of `walk`. Must return the passed `TestFile`.
+#[cfg(feature = "async")]
+pub async fn walk_async<F, T>(dir: &str, mut f: F)
+where
+    F: FnMut(TestFile) -> T,
+    T: Future<Output = TestFile>,
+{
+    let mut file_prefix = PathBuf::from(dir);
+    if let Ok(p) = env::var("RUN") {
+        file_prefix = file_prefix.join(p);
+    }
+
+    let files = if file_prefix.is_dir() {
+        test_files(PathBuf::from(dir)).unwrap()
+    } else if file_prefix.exists() {
+        vec![file_prefix]
+    } else {
+        vec![]
+    };
+
+    // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
+    let mut failures = Vec::new();
+    for file in files {
+        let tf = TestFile::new(&file).unwrap();
+        let tf = f(tf).await;
+        if let Some(fail) = tf.failure {
+            failures.push(fail);
+        }
+    }
+
+    if !failures.is_empty() {
+        let mut msg = String::new();
+        for f in failures {
+            msg.push_str(&f);
+            msg.push_str("\n");
+        }
+        panic!("{}", msg);
+    }
+}
+
+#[cfg(feature = "async")]
+impl TestFile {
+    /// The async equivalent of `run`.
+    pub async fn run_async<F, T>(&mut self, f: F)
+    where
+        F: FnMut(TestCase) -> T,
+        T: Future<Output = String>,
+    {
+        match env::var("REWRITE") {
+            Ok(_) => self.run_rewrite_async(f).await,
+            Err(_) => self.run_normal_async(f).await,
+        }
+    }
+
+    async fn run_normal_async<F, T>(&mut self, mut f: F)
+    where
+        F: FnMut(TestCase) -> T,
+        T: Future<Output = String>,
+    {
+        for stanza in self.stanzas.drain(..) {
+            if let Stanza::Test(case) = stanza {
+                let result = f(case.clone()).await;
+                if result != case.expected {
+                    self.failure = Some(format!(
+                        "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
+                        self.filename
+                            .as_ref()
+                            .unwrap_or(&"<unknown file>".to_string()),
+                        case.line_number,
+                        case.input,
+                        case.expected,
+                        result
+                    ));
+                    // Yeah, ok, we're done here.
+                    break;
+                }
+            }
+        }
+    }
+
+    async fn run_rewrite_async<F, T>(&mut self, mut f: F)
+    where
+        F: FnMut(TestCase) -> T,
+        T: Future<Output = String>,
+    {
+        let mut s = String::new();
+        for stanza in self.stanzas.drain(..) {
+            match stanza {
+                Stanza::Test(case) => {
+                    s.push_str(&case.directive_line);
+                    s.push('\n');
+                    s.push_str(&case.input);
+                    s.push_str("----\n");
+                    let result = f(case).await;
+                    let blank_mode = result.contains("\n\n");
+                    if blank_mode {
+                        s.push_str("----\n");
+                    }
+                    s.push_str(&result);
+                    if blank_mode {
+                        s.push_str("----\n----\n");
+                    }
+                }
+                Stanza::Comment(c) => {
+                    s.push_str(&c);
+                    s.push('\n');
+                }
+            }
+        }
+        // TODO(justin): surface these errors somehow?
+        fs::write(self.filename.as_ref().unwrap(), s).unwrap();
     }
 }
 
