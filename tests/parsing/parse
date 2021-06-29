@@ -52,6 +52,12 @@ hello 123=(1,2,3) 456=(4   ,  5,    6)
 directive: hello
 args: [("123", ["1", "2", "3"]), ("456", ["4", "5", "6"])]
 
+parse-directive
+validchars 123abcs-_.
+----
+directive: validchars
+args: [("123abcs-_.", [])]
+
 # Error cases.
 
 parse-directive
