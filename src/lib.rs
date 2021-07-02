@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::env;
+use std::fmt::Write;
 use std::fs;
 use std::path::PathBuf;
 use std::result::Result;
@@ -230,6 +231,21 @@ pub struct TestFile {
     failure: Option<String>,
 }
 
+fn write_result<W>(w: &mut W, s: String)
+where
+    W: Write,
+{
+    w.write_str("----\n").unwrap();
+    let blank_mode = s.contains("\n\n");
+    if blank_mode {
+        w.write_str("----\n").unwrap();
+    }
+    w.write_str(&s).unwrap();
+    if blank_mode {
+        w.write_str("----\n----\n").unwrap();
+    }
+}
+
 impl TestFile {
     fn new(filename: &PathBuf) -> Result<Self, Error> {
         let contents = fs::read_to_string(filename)
@@ -288,19 +304,10 @@ impl TestFile {
         for stanza in &self.stanzas {
             match stanza {
                 Stanza::Test(case) => {
-                    let result = f(&case);
-                    let blank_mode = result.contains("\n\n");
                     s.push_str(&case.directive_line);
                     s.push('\n');
                     s.push_str(&case.input);
-                    s.push_str("----\n");
-                    if blank_mode {
-                        s.push_str("----\n");
-                    }
-                    s.push_str(&result);
-                    if blank_mode {
-                        s.push_str("----\n----\n");
-                    }
+                    write_result(&mut s, f(&case));
                 }
                 Stanza::Comment(c) => {
                     s.push_str(&c);
@@ -336,7 +343,7 @@ impl TestFile {
             let directive_line = lines[i].to_string();
             let (directive, args) = match parser.parse_directive() {
                 Ok(result) => result,
-                Err(err) => bail!("{}: {}", i + 1, err),
+                Err(err) => bail!("{}: {}", line_number, err),
             };
 
             i += 1;
@@ -397,6 +404,21 @@ impl TestFile {
     }
 }
 
+fn file_list(dir: &str) -> Vec<PathBuf> {
+    let mut file_prefix = PathBuf::from(dir);
+    if let Ok(p) = env::var("RUN") {
+        file_prefix = file_prefix.join(p);
+    }
+
+    if file_prefix.is_dir() {
+        test_files(PathBuf::from(dir)).unwrap()
+    } else if file_prefix.exists() {
+        vec![file_prefix]
+    } else {
+        vec![]
+    }
+}
+
 /// The async equivalent of `walk`. Must return the passed `TestFile`.
 #[cfg(feature = "async")]
 pub async fn walk_async<F, T>(dir: &str, mut f: F)
@@ -404,22 +426,9 @@ where
     F: FnMut(TestFile) -> T,
     T: Future<Output = TestFile>,
 {
-    let mut file_prefix = PathBuf::from(dir);
-    if let Ok(p) = env::var("RUN") {
-        file_prefix = file_prefix.join(p);
-    }
-
-    let files = if file_prefix.is_dir() {
-        test_files(PathBuf::from(dir)).unwrap()
-    } else if file_prefix.exists() {
-        vec![file_prefix]
-    } else {
-        vec![]
-    };
-
     // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
     let mut failures = Vec::new();
-    for file in files {
+    for file in file_list(dir) {
         let tf = TestFile::new(&file).unwrap();
         let tf = f(tf).await;
         if let Some(fail) = tf.failure {
@@ -489,16 +498,7 @@ impl TestFile {
                     s.push_str(&case.directive_line);
                     s.push('\n');
                     s.push_str(&case.input);
-                    s.push_str("----\n");
-                    let result = f(case).await;
-                    let blank_mode = result.contains("\n\n");
-                    if blank_mode {
-                        s.push_str("----\n");
-                    }
-                    s.push_str(&result);
-                    if blank_mode {
-                        s.push_str("----\n----\n");
-                    }
+                    write_result(&mut s, f(case).await);
                 }
                 Stanza::Comment(c) => {
                     s.push_str(&c);
