@@ -1,0 +1,7 @@
+strip-newline
+hello
+----
+----
+hello
+----
+---- (no newline)

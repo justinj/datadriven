@@ -235,14 +235,17 @@ fn write_result<W>(w: &mut W, s: String)
 where
     W: Write,
 {
-    w.write_str("----\n").unwrap();
-    let blank_mode = s.contains("\n\n");
-    if blank_mode {
-        w.write_str("----\n").unwrap();
-    }
-    w.write_str(&s).unwrap();
-    if blank_mode {
+    if !s.ends_with('\n') {
         w.write_str("----\n----\n").unwrap();
+        w.write_str(&s).unwrap();
+        w.write_str("\n----\n---- (no newline)\n").unwrap();
+    } else if s.contains("\n\n") {
+        w.write_str("----\n----\n").unwrap();
+        w.write_str(&s).unwrap();
+        w.write_str("----\n----\n").unwrap();
+    } else {
+        w.write_str("----\n").unwrap();
+        w.write_str(&s).unwrap();
     }
 }
 
@@ -371,9 +374,17 @@ impl TestFile {
                             line_number,
                         );
                     }
-                    if i + 1 < lines.len() && lines[i] == "----" && lines[i + 1] == "----" {
-                        i += 2;
-                        break;
+                    if i + 1 < lines.len() && lines[i] == "----" {
+                        if lines[i + 1] == "----" {
+                            i += 2;
+                            break;
+                        } else if lines[i + 1] == "---- (no newline)" {
+                            i += 2;
+                            if expected.ends_with('\n') {
+                                expected.pop().expect("should be nonempty.");
+                            }
+                            break;
+                        }
                     }
                 } else if lines[i].trim() == "" {
                     break;
@@ -467,16 +478,17 @@ impl TestFile {
     {
         for stanza in self.stanzas.drain(..) {
             if let Stanza::Test(case) = stanza {
-                let result = f(case.clone()).await;
-                if result != case.expected {
+                let original_case = case.clone();
+                let result = f(case).await;
+                if result != original_case.expected {
                     self.failure = Some(format!(
                         "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
                         self.filename
                             .as_ref()
                             .unwrap_or(&"<unknown file>".to_string()),
-                        case.line_number,
-                        case.input,
-                        case.expected,
+                        original_case.line_number,
+                        original_case.input,
+                        original_case.expected,
                         result
                     ));
                     // Yeah, ok, we're done here.

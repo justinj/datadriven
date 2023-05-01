@@ -8,10 +8,16 @@ mod tests {
     fn run() {
         walk("tests/testdata", |f| {
             f.run(|s| -> String {
-                let mut result = String::new();
-                result.push_str(s.input.trim());
-                result.push('\n');
-                result
+                match s.directive.as_str() {
+                    "echo" => {
+                        let mut result = String::new();
+                        result.push_str(s.input.trim());
+                        result.push('\n');
+                        result
+                    }
+                    "strip-newline" => s.input.trim().into(),
+                    _ => "unhandled\n".into(),
+                }
             })
         });
     }

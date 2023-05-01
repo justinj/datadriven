@@ -1,4 +1,4 @@
-foo # this is also a comment!
+echo # this is also a comment!
 abc
 
 def
