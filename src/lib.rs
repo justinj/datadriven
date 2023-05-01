@@ -58,7 +58,7 @@ where
         let mut msg = String::new();
         for f in failures {
             msg.push_str(&f);
-            msg.push_str("\n");
+            msg.push('\n');
         }
         panic!("{}", msg);
     }
@@ -134,9 +134,9 @@ impl DirectiveParser {
     }
 
     fn is_wordchar(ch: char) -> bool {
-        ch >= 'a' && ch <= 'z'
-            || ch >= 'A' && ch <= 'Z'
-            || ch >= '0' && ch <= '9'
+        ('a'..='z').contains(&ch)
+            || ('A'..='Z').contains(&ch)
+            || ('0'..='9').contains(&ch)
             || ch == '-'
             || ch == '_'
             || ch == '.'
@@ -277,7 +277,7 @@ impl TestFile {
     {
         for stanza in &self.stanzas {
             if let Stanza::Test(case) = stanza {
-                let result = f(&case);
+                let result = f(case);
                 if result != case.expected {
                     self.failure = Some(format!(
                         "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
@@ -307,10 +307,10 @@ impl TestFile {
                     s.push_str(&case.directive_line);
                     s.push('\n');
                     s.push_str(&case.input);
-                    write_result(&mut s, f(&case));
+                    write_result(&mut s, f(case));
                 }
                 Stanza::Comment(c) => {
-                    s.push_str(&c);
+                    s.push_str(c);
                     s.push('\n');
                 }
             }
@@ -440,7 +440,7 @@ where
         let mut msg = String::new();
         for f in failures {
             msg.push_str(&f);
-            msg.push_str("\n");
+            msg.push('\n');
         }
         panic!("{}", msg);
     }
@@ -520,7 +520,7 @@ mod tests {
     fn parse_directive() {
         walk("tests/parsing", |f| {
             f.run(|s| -> String {
-                match DirectiveParser::new(&s.input.trim()).parse_directive() {
+                match DirectiveParser::new(s.input.trim()).parse_directive() {
                     Ok((directive, mut args)) => {
                         let mut sorted_args = args.drain().collect::<Vec<(String, Vec<String>)>>();
                         sorted_args.sort_by(|a, b| a.0.cmp(&b.0));

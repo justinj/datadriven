@@ -9,8 +9,8 @@ mod tests {
         walk("tests/testdata", |f| {
             f.run(|s| -> String {
                 let mut result = String::new();
-                result.push_str(&s.input.trim());
-                result.push_str("\n");
+                result.push_str(s.input.trim());
+                result.push('\n');
                 result
             })
         });
@@ -21,8 +21,8 @@ mod tests {
         walk_async("tests/testdata_async", |mut f| async move {
             f.run_async(|s| async move {
                 let mut result = String::new();
-                result.push_str(&s.input.trim());
-                result.push_str("\n");
+                result.push_str(s.input.trim());
+                result.push('\n');
                 result
             })
             .await;
