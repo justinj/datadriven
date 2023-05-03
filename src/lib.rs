@@ -4,8 +4,9 @@ use std::fmt::Write;
 use std::fs;
 use std::path::PathBuf;
 use std::result::Result;
+use std::str::FromStr;
 
-use anyhow::{bail, Context, Error};
+use anyhow::{anyhow, bail, Context, Error};
 
 #[cfg(feature = "async")]
 use futures::future::Future;
@@ -23,6 +24,59 @@ pub struct TestCase {
     directive_line: String,
     expected: String,
     line_number: usize,
+}
+
+impl TestCase {
+    /// Extract the given arg from the test case, removing it. Fails if there
+    /// isn't exactly one argument for the value.
+    pub fn take_arg<T>(&mut self, arg: &str) -> anyhow::Result<T>
+    where
+        T: FromStr,
+        <T as std::str::FromStr>::Err: std::error::Error + Send + Sync + 'static,
+    {
+        let contents = self.args.remove(arg);
+        if let Some(args) = contents {
+            if args.len() != 1 {
+                bail!(
+                    "must be exactly one argument to take_arg, {} had {}",
+                    arg,
+                    args.len(),
+                )
+            }
+            Ok(args[0].parse()?)
+        } else {
+            bail!("no argument named {}", arg)
+        }
+    }
+
+    /// Extract the given args from the test case, removing it.
+    pub fn take_args<T>(&mut self, arg: &str) -> anyhow::Result<Vec<T>>
+    where
+        T: FromStr,
+        <T as std::str::FromStr>::Err: std::error::Error + Send + Sync + 'static,
+    {
+        let contents = self.args.remove(arg);
+        if let Some(args) = contents {
+            Ok(args
+                .into_iter()
+                .map(|a| Ok(a.parse()?))
+                .collect::<anyhow::Result<Vec<T>>>()?)
+        } else {
+            bail!("no argument named {}", arg)
+        }
+    }
+
+    // Returns an error if there are any arguments that haven't been used.
+    pub fn expect_empty(&self) -> anyhow::Result<()> {
+        if self.args.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "unused arguments: {:?}",
+                self.args.keys().collect::<Vec<_>>(),
+            ))
+        }
+    }
 }
 
 /// Walk a directory for test files and run each one as a test.
@@ -266,7 +320,7 @@ impl TestFile {
     /// processes it.
     pub fn run<F>(&mut self, f: F)
     where
-        F: FnMut(&TestCase) -> String,
+        F: FnMut(&mut TestCase) -> String,
     {
         match env::var("REWRITE") {
             Ok(_) => self.run_rewrite(f),
@@ -276,9 +330,9 @@ impl TestFile {
 
     fn run_normal<F>(&mut self, mut f: F)
     where
-        F: FnMut(&TestCase) -> String,
+        F: FnMut(&mut TestCase) -> String,
     {
-        for stanza in &self.stanzas {
+        for stanza in &mut self.stanzas {
             if let Stanza::Test(case) = stanza {
                 let result = f(case);
                 if result != case.expected {
@@ -301,10 +355,10 @@ impl TestFile {
 
     fn run_rewrite<F>(&mut self, mut f: F)
     where
-        F: FnMut(&TestCase) -> String,
+        F: FnMut(&mut TestCase) -> String,
     {
         let mut s = String::new();
-        for stanza in &self.stanzas {
+        for stanza in &mut self.stanzas {
             match stanza {
                 Stanza::Test(case) => {
                     s.push_str(&case.directive_line);

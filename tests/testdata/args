@@ -1,0 +1,16 @@
+replicate times=4
+foo
+----
+foofoofoofoo
+
+replicate times=2
+foo
+----
+foofoo
+
+replicate-lines times=(2,3,4)
+foo
+----
+foofoo
+foofoofoo
+foofoofoofoo
