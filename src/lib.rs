@@ -11,6 +11,38 @@ use anyhow::{anyhow, bail, Context, Error};
 #[cfg(feature = "async")]
 use futures::future::Future;
 
+pub trait TestCaseResult {
+    type Err: std::fmt::Display + std::fmt::Debug;
+
+    fn result(self) -> Result<String, Self::Err>;
+}
+
+#[derive(Debug)]
+pub enum Never {}
+impl std::fmt::Display for Never {
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        unreachable!()
+    }
+}
+
+impl TestCaseResult for String {
+    type Err = Never;
+    fn result(self) -> Result<String, Self::Err> {
+        Ok(self)
+    }
+}
+
+impl<S, E> TestCaseResult for Result<S, E>
+where
+    S: Into<String>,
+    E: std::fmt::Display + std::fmt::Debug,
+{
+    type Err = E;
+    fn result(self) -> Result<String, E> {
+        self.map(|s| s.into())
+    }
+}
+
 /// A single test case within a file.
 #[derive(Debug, Clone)]
 pub struct TestCase {
@@ -318,9 +350,10 @@ impl TestFile {
     /// Run each test in this file in sequence by calling `f` on it. If any test fails, execution
     /// halts. If the REWRITE environment variable is set, it will rewrite each file as it
     /// processes it.
-    pub fn run<F>(&mut self, f: F)
+    pub fn run<F, R>(&mut self, f: F)
     where
-        F: FnMut(&mut TestCase) -> String,
+        F: FnMut(&mut TestCase) -> R,
+        R: TestCaseResult,
     {
         match env::var("REWRITE") {
             Ok(_) => self.run_rewrite(f),
@@ -328,34 +361,51 @@ impl TestFile {
         }
     }
 
-    fn run_normal<F>(&mut self, mut f: F)
+    fn run_normal<F, R>(&mut self, mut f: F)
     where
-        F: FnMut(&mut TestCase) -> String,
+        F: FnMut(&mut TestCase) -> R,
+        R: TestCaseResult,
     {
         for stanza in &mut self.stanzas {
             if let Stanza::Test(case) = stanza {
                 let result = f(case);
-                if result != case.expected {
-                    self.failure = Some(format!(
-                        "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
-                        self.filename
-                            .as_ref()
-                            .unwrap_or(&"<unknown file>".to_string()),
-                        case.line_number,
-                        case.input,
-                        case.expected,
-                        result
-                    ));
-                    // Yeah, ok, we're done here.
-                    break;
+                match result.result() {
+                    Ok(result) => {
+                        if result != case.expected {
+                            self.failure = Some(format!(
+                                "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
+                                self.filename
+                                    .as_ref()
+                                    .unwrap_or(&"<unknown file>".to_string()),
+                                case.line_number,
+                                case.input,
+                                case.expected,
+                                result
+                            ));
+                            // Yeah, ok, we're done here.
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        self.failure = Some(format!(
+                            "failure:\n{}:{}:\n{}\n{}",
+                            self.filename
+                                .as_ref()
+                                .unwrap_or(&"<unknown file>".to_string()),
+                            case.line_number,
+                            case.input,
+                            err
+                        ));
+                    }
                 }
             }
         }
     }
 
-    fn run_rewrite<F>(&mut self, mut f: F)
+    fn run_rewrite<F, R>(&mut self, mut f: F)
     where
-        F: FnMut(&mut TestCase) -> String,
+        F: FnMut(&mut TestCase) -> R,
+        R: TestCaseResult,
     {
         let mut s = String::new();
         for stanza in &mut self.stanzas {
@@ -364,10 +414,10 @@ impl TestFile {
                     s.push_str(&case.directive_line);
                     s.push('\n');
                     s.push_str(&case.input);
-                    write_result(&mut s, f(case));
+                    write_result(&mut s, f(case).result().unwrap());
                 }
                 Stanza::Comment(c) => {
-                    s.push_str(c);
+                    s.push_str(c.as_str());
                     s.push('\n');
                 }
             }

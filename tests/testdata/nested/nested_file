@@ -1,4 +1,4 @@
-foo
+echo
 test
 ----
-unhandled
+test
