@@ -3,3 +3,5 @@
 * When outputs don't end in a newline, they will now be surrounded with double
   `----`s and will have `(no newline)` at the end.
 * Added `take_arg`, `take_args`, and `expect_empty` for easier parsing of args.
+* Removed dependency on `anyhow`, now just a dev-dependency.
+* Improved error messages.
