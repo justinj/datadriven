@@ -14,3 +14,11 @@ foo
 foofoo
 foofoofoo
 foofoofoofoo
+
+test-args zero one=1 two=(1,2)
+----
+ok
+
+try-test-args zero one=1 two=(1,2)
+----
+ok

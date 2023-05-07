@@ -59,6 +59,24 @@ pub struct TestCase {
 }
 
 impl TestCase {
+    /// Extract the given flag from the test case, removing it. Fails if there
+    /// are any arguments for the value. Returns true if the flag was present.
+    pub fn take_flag(&mut self, arg: &str) -> anyhow::Result<bool> {
+        let contents = self.args.remove(arg);
+        Ok(if let Some(args) = contents {
+            if !args.is_empty() {
+                bail!(
+                    "must be exactly zero arguments to take_flag, {} had {}",
+                    arg,
+                    args.len(),
+                )
+            }
+            true
+        } else {
+            false
+        })
+    }
+
     /// Extract the given arg from the test case, removing it. Fails if there
     /// isn't exactly one argument for the value.
     pub fn take_arg<T>(&mut self, arg: &str) -> anyhow::Result<T>
@@ -66,36 +84,67 @@ impl TestCase {
         T: FromStr,
         <T as std::str::FromStr>::Err: std::error::Error + Send + Sync + 'static,
     {
+        let result = self.try_take_arg(arg)?;
+        if let Some(result) = result {
+            Ok(result)
+        } else {
+            bail!("no argument named {}", arg)
+        }
+    }
+
+    /// Extract the given arg from the test case, removing it if it exists.
+    pub fn try_take_arg<T>(&mut self, arg: &str) -> anyhow::Result<Option<T>>
+    where
+        T: FromStr,
+        <T as std::str::FromStr>::Err: std::error::Error + Send + Sync + 'static,
+    {
         let contents = self.args.remove(arg);
-        if let Some(args) = contents {
-            if args.len() != 1 {
-                bail!(
+        Ok(if let Some(args) = contents {
+            match args.len() {
+                0 => None,
+                1 => Some(args[0].parse()?),
+                _ => bail!(
                     "must be exactly one argument to take_arg, {} had {}",
                     arg,
                     args.len(),
-                )
+                ),
             }
-            Ok(args[0].parse()?)
+        } else {
+            None
+        })
+    }
+
+    /// Extract the given args from the test case, removing it. Returns an error
+    /// if the argument was not present at all.
+    pub fn take_args<T>(&mut self, arg: &str) -> anyhow::Result<Vec<T>>
+    where
+        T: FromStr,
+        <T as std::str::FromStr>::Err: std::error::Error + Send + Sync + 'static,
+    {
+        let result = self.try_take_args(arg)?;
+        if let Some(result) = result {
+            Ok(result)
         } else {
             bail!("no argument named {}", arg)
         }
     }
 
     /// Extract the given args from the test case, removing it.
-    pub fn take_args<T>(&mut self, arg: &str) -> anyhow::Result<Vec<T>>
+    pub fn try_take_args<T>(&mut self, arg: &str) -> anyhow::Result<Option<Vec<T>>>
     where
         T: FromStr,
         <T as std::str::FromStr>::Err: std::error::Error + Send + Sync + 'static,
     {
         let contents = self.args.remove(arg);
-        if let Some(args) = contents {
-            Ok(args
-                .into_iter()
-                .map(|a| Ok(a.parse()?))
-                .collect::<anyhow::Result<Vec<T>>>()?)
+        Ok(if let Some(args) = contents {
+            Some(
+                args.into_iter()
+                    .map(|a| Ok(a.parse()?))
+                    .collect::<anyhow::Result<Vec<T>>>()?,
+            )
         } else {
-            bail!("no argument named {}", arg)
-        }
+            None
+        })
     }
 
     // Returns an error if there are any arguments that haven't been used.
