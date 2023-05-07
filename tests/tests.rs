@@ -38,6 +38,10 @@ mod tests {
                         }
                         result
                     }
+                    "append" => {
+                        let suffix = s.take_arg::<String>("suffix").unwrap();
+                        format!("{}{}\n", s.input.trim(), suffix)
+                    }
                     "test-args" => return "ok\n".into(),
                     "try-test-args" => return "ok\n".into(),
                     _ => "unhandled\n".into(),
@@ -82,6 +86,10 @@ mod tests {
                             result.push('\n');
                         }
                         result
+                    }
+                    "append" => {
+                        let suffix = s.take_arg::<String>("suffix")?;
+                        format!("{}{}\n", s.input.trim(), suffix)
                     }
                     "test-args" => {
                         if s.take_arg::<String>("foo").is_ok() {

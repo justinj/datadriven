@@ -334,12 +334,7 @@ impl DirectiveParser {
     }
 
     fn is_wordchar(ch: char) -> bool {
-        ('a'..='z').contains(&ch)
-            || ('A'..='Z').contains(&ch)
-            || ('0'..='9').contains(&ch)
-            || ch == '-'
-            || ch == '_'
-            || ch == '.'
+        ch.is_alphanumeric() || ch == '-' || ch == '_' || ch == '.'
     }
 
     fn parse_word(&mut self, context: &str) -> Result<String, DataDrivenError> {
