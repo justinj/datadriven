@@ -5,11 +5,62 @@ use std::fs;
 use std::path::PathBuf;
 use std::result::Result;
 use std::str::FromStr;
-
-use anyhow::{anyhow, bail, Context, Error};
+use thiserror::Error;
 
 #[cfg(feature = "async")]
 use futures::future::Future;
+
+#[derive(Error, Debug)]
+pub enum DataDrivenError {
+    #[error("parsing: {0}")]
+    Parse(String),
+    #[error("reading files: {0}")]
+    Io(std::io::Error),
+    #[error("{filename}:{line}: {inner}")]
+    WithContext {
+        line: usize,
+        filename: String,
+        inner: Box<DataDrivenError>,
+    },
+    #[error("argument: {0}")]
+    Argument(String),
+    #[error("didn't use all arguments: {0:?}")]
+    DidntUseAllArguments(Vec<String>),
+}
+
+impl DataDrivenError {
+    fn with_line(self, line: usize) -> Self {
+        match self {
+            DataDrivenError::WithContext {
+                filename, inner, ..
+            } => DataDrivenError::WithContext {
+                line,
+                filename,
+                inner,
+            },
+            e => DataDrivenError::WithContext {
+                line,
+                filename: Default::default(),
+                inner: Box::new(e),
+            },
+        }
+    }
+
+    fn with_filename(self, filename: String) -> Self {
+        match self {
+            DataDrivenError::WithContext { line, inner, .. } => DataDrivenError::WithContext {
+                line,
+                filename,
+                inner,
+            },
+            e => DataDrivenError::WithContext {
+                line: Default::default(),
+                filename,
+                inner: Box::new(e),
+            },
+        }
+    }
+}
 
 pub trait TestCaseResult {
     type Err: std::fmt::Display + std::fmt::Debug;
@@ -61,15 +112,15 @@ pub struct TestCase {
 impl TestCase {
     /// Extract the given flag from the test case, removing it. Fails if there
     /// are any arguments for the value. Returns true if the flag was present.
-    pub fn take_flag(&mut self, arg: &str) -> anyhow::Result<bool> {
+    pub fn take_flag(&mut self, arg: &str) -> Result<bool, DataDrivenError> {
         let contents = self.args.remove(arg);
         Ok(if let Some(args) = contents {
             if !args.is_empty() {
-                bail!(
-                    "must be exactly zero arguments to take_flag, {} had {}",
+                Err(DataDrivenError::Argument(format!(
+                    "must be no arguments to take_flag, {} had {}",
                     arg,
                     args.len(),
-                )
+                )))?;
             }
             true
         } else {
@@ -79,7 +130,7 @@ impl TestCase {
 
     /// Extract the given arg from the test case, removing it. Fails if there
     /// isn't exactly one argument for the value.
-    pub fn take_arg<T>(&mut self, arg: &str) -> anyhow::Result<T>
+    pub fn take_arg<T>(&mut self, arg: &str) -> Result<T, DataDrivenError>
     where
         T: FromStr,
         <T as std::str::FromStr>::Err: std::error::Error + Send + Sync + 'static,
@@ -88,12 +139,15 @@ impl TestCase {
         if let Some(result) = result {
             Ok(result)
         } else {
-            bail!("no argument named {}", arg)
+            Err(DataDrivenError::Argument(format!(
+                "no argument named {}",
+                arg
+            )))
         }
     }
 
     /// Extract the given arg from the test case, removing it if it exists.
-    pub fn try_take_arg<T>(&mut self, arg: &str) -> anyhow::Result<Option<T>>
+    pub fn try_take_arg<T>(&mut self, arg: &str) -> Result<Option<T>, DataDrivenError>
     where
         T: FromStr,
         <T as std::str::FromStr>::Err: std::error::Error + Send + Sync + 'static,
@@ -102,12 +156,16 @@ impl TestCase {
         Ok(if let Some(args) = contents {
             match args.len() {
                 0 => None,
-                1 => Some(args[0].parse()?),
-                _ => bail!(
+                1 => Some(
+                    args[0]
+                        .parse()
+                        .map_err(|e| DataDrivenError::Argument(format!("couldn't parse: {}", e)))?,
+                ),
+                _ => Err(DataDrivenError::Argument(format!(
                     "must be exactly one argument to take_arg, {} had {}",
                     arg,
                     args.len(),
-                ),
+                )))?,
             }
         } else {
             None
@@ -116,31 +174,39 @@ impl TestCase {
 
     /// Extract the given args from the test case, removing it. Returns an error
     /// if the argument was not present at all.
-    pub fn take_args<T>(&mut self, arg: &str) -> anyhow::Result<Vec<T>>
+    pub fn take_args<T>(&mut self, arg: &str) -> Result<Vec<T>, DataDrivenError>
     where
         T: FromStr,
         <T as std::str::FromStr>::Err: std::error::Error + Send + Sync + 'static,
     {
-        let result = self.try_take_args(arg)?;
+        let result = self
+            .try_take_args(arg)
+            .map_err(|e| DataDrivenError::Argument(format!("couldn't parse: {}", e)))?;
         if let Some(result) = result {
             Ok(result)
         } else {
-            bail!("no argument named {}", arg)
+            Err(DataDrivenError::Argument(format!(
+                "no argument named {}",
+                arg
+            )))
         }
     }
 
     /// Extract the given args from the test case, removing it.
-    pub fn try_take_args<T>(&mut self, arg: &str) -> anyhow::Result<Option<Vec<T>>>
+    pub fn try_take_args<T>(&mut self, arg: &str) -> Result<Option<Vec<T>>, DataDrivenError>
     where
         T: FromStr,
-        <T as std::str::FromStr>::Err: std::error::Error + Send + Sync + 'static,
+        <T as std::str::FromStr>::Err: std::error::Error + Send + 'static,
     {
         let contents = self.args.remove(arg);
         Ok(if let Some(args) = contents {
             Some(
                 args.into_iter()
-                    .map(|a| Ok(a.parse()?))
-                    .collect::<anyhow::Result<Vec<T>>>()?,
+                    .map(|a| {
+                        a.parse()
+                            .map_err(|e| DataDrivenError::Parse(format!("couldn't parse: {}", e)))
+                    })
+                    .collect::<Result<Vec<T>, DataDrivenError>>()?,
             )
         } else {
             None
@@ -148,13 +214,12 @@ impl TestCase {
     }
 
     // Returns an error if there are any arguments that haven't been used.
-    pub fn expect_empty(&self) -> anyhow::Result<()> {
+    pub fn expect_empty(&self) -> Result<(), DataDrivenError> {
         if self.args.is_empty() {
             Ok(())
         } else {
-            Err(anyhow!(
-                "unused arguments: {:?}",
-                self.args.keys().collect::<Vec<_>>(),
+            Err(DataDrivenError::DidntUseAllArguments(
+                self.args.keys().cloned().collect::<Vec<_>>(),
             ))
         }
     }
@@ -205,13 +270,13 @@ fn should_ignore_file(name: &str) -> bool {
 }
 
 // Extracts all the non-directory children of dir. Not defensive against cycles!
-fn test_files(dir: PathBuf) -> Result<Vec<PathBuf>, Error> {
+fn test_files(dir: PathBuf) -> Result<Vec<PathBuf>, DataDrivenError> {
     let mut q = VecDeque::new();
     q.push_back(dir);
     let mut res = vec![];
     while let Some(hd) = q.pop_front() {
-        for entry in fs::read_dir(hd)? {
-            let path = entry?.path();
+        for entry in fs::read_dir(hd).map_err(DataDrivenError::Io)? {
+            let path = entry.map_err(DataDrivenError::Io)?.path();
             if path.is_dir() {
                 q.push_back(path);
             } else if !should_ignore_file(path.file_name().unwrap().to_str().unwrap()) {
@@ -277,16 +342,22 @@ impl DirectiveParser {
             || ch == '.'
     }
 
-    fn parse_word(&mut self, context: &str) -> Result<String, Error> {
+    fn parse_word(&mut self, context: &str) -> Result<String, DataDrivenError> {
         let start = self.idx;
         while self.peek().map_or(false, Self::is_wordchar) {
             self.idx += 1;
         }
         if self.idx == start {
             match self.peek() {
-                Some(ch) => bail!("expected {}, got {}", context, ch),
-                None => bail!("expected {} but directive line ended", context),
-            }
+                Some(ch) => Err(DataDrivenError::Parse(format!(
+                    "expected {}, got {}",
+                    context, ch
+                ))),
+                None => Err(DataDrivenError::Parse(format!(
+                    "expected {} but directive line ended",
+                    context
+                ))),
+            }?
         }
         let result = self.chars[start..self.idx].iter().collect();
         self.munch();
@@ -297,14 +368,14 @@ impl DirectiveParser {
         self.idx >= self.chars.len()
     }
 
-    fn parse_arg(&mut self) -> Result<(String, Vec<String>), Error> {
+    fn parse_arg(&mut self) -> Result<(String, Vec<String>), DataDrivenError> {
         let name = self.parse_word("argument name")?;
         let vals = self.parse_vals()?;
         Ok((name, vals))
     }
 
     // Parses an argument value, including the leading `=`.
-    fn parse_vals(&mut self) -> Result<Vec<String>, Error> {
+    fn parse_vals(&mut self) -> Result<Vec<String>, DataDrivenError> {
         if !self.eat('=') {
             return Ok(Vec::new());
         }
@@ -323,23 +394,33 @@ impl DirectiveParser {
             self.munch();
         }
         match self.peek() {
-            Some(')') => {}
-            Some(ch) => bail!("expected ',' or ')', got '{}'", ch),
-            None => bail!("expected ',' or ')', but directive line ended"),
-        }
+            Some(')') => Ok(()),
+            Some(ch) => Err(DataDrivenError::Parse(format!(
+                "expected ',' or ')', got '{}'",
+                ch,
+            ))),
+            None => Err(DataDrivenError::Parse(
+                "expected ',' or '', but directive line ended".into(),
+            )),
+        }?;
         self.idx += 1;
         self.munch();
         Ok(vals)
     }
 
-    fn parse_directive(&mut self) -> Result<(String, HashMap<String, Vec<String>>), Error> {
+    fn parse_directive(
+        &mut self,
+    ) -> Result<(String, HashMap<String, Vec<String>>), DataDrivenError> {
         self.munch();
         let directive = self.parse_word("directive")?;
         let mut args = HashMap::new();
         while !self.at_end() {
             let (arg_name, arg_vals) = self.parse_arg()?;
             if args.contains_key(&arg_name) {
-                bail!("duplicate argument: {}", arg_name);
+                Err(DataDrivenError::Parse(format!(
+                    "duplicate argument: {}",
+                    arg_name
+                )))?;
             }
             args.insert(arg_name, arg_vals);
         }
@@ -385,13 +466,10 @@ where
 }
 
 impl TestFile {
-    fn new(filename: &PathBuf) -> Result<Self, Error> {
-        let contents = fs::read_to_string(filename)
-            .with_context(|| format!("error reading file {}", filename.display()))?;
-        let mut res = match Self::parse(&contents) {
-            Ok(res) => res,
-            Err(err) => bail!("{}:{}", filename.display(), err),
-        };
+    fn new(filename: &PathBuf) -> Result<Self, DataDrivenError> {
+        let contents = fs::read_to_string(filename).map_err(DataDrivenError::Io)?;
+        let mut res =
+            Self::parse(&contents).map_err(|e| e.with_filename(filename.display().to_string()))?;
         res.filename = Some(filename.to_string_lossy().to_string());
         Ok(res)
     }
@@ -475,7 +553,7 @@ impl TestFile {
         fs::write(self.filename.as_ref().unwrap(), s).unwrap();
     }
 
-    fn parse(f: &str) -> Result<Self, Error> {
+    fn parse(f: &str) -> Result<Self, DataDrivenError> {
         let mut stanzas = vec![];
         let lines: Vec<&str> = f.lines().collect();
         let mut i = 0;
@@ -497,10 +575,9 @@ impl TestFile {
 
             let mut parser = DirectiveParser::new(&line);
             let directive_line = lines[i].to_string();
-            let (directive, args) = match parser.parse_directive() {
-                Ok(result) => result,
-                Err(err) => bail!("{}: {}", line_number, err),
-            };
+            let (directive, args) = parser
+                .parse_directive()
+                .map_err(|e| e.with_line(line_number))?;
 
             i += 1;
             let mut input = String::new();
@@ -522,10 +599,10 @@ impl TestFile {
             while i < lines.len() {
                 if blank_mode {
                     if i + 1 >= lines.len() {
-                        bail!(
+                        Err(DataDrivenError::Parse(format!(
                             "unclosed double-separator block for test case starting at line {}",
                             line_number,
-                        );
+                        )))?;
                     }
                     if i + 1 < lines.len() && lines[i] == "----" {
                         if lines[i + 1] == "----" {

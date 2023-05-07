@@ -63,44 +63,44 @@ args: [("123abcs-_.", [])]
 parse-directive
 hello foo=(
 ----
-error: expected argument value but directive line ended
+error: parsing: expected argument value but directive line ended
 
 parse-directive
 hello foo=((
 ----
-error: expected argument value, got (
+error: parsing: expected argument value, got (
 
 parse-directive
 hello foo=(bar
 ----
-error: expected ',' or ')', but directive line ended
+error: parsing: expected ',' or '', but directive line ended
 
 parse-directive
 hello foo=(bar(
 ----
-error: expected ',' or ')', got '('
+error: parsing: expected ',' or ')', got '('
 
 parse-directive
 hello foo=)
 ----
-error: expected argument value, got )
+error: parsing: expected argument value, got )
 
 parse-directive
 hello <
 ----
-error: expected argument name, got <
+error: parsing: expected argument name, got <
 
 parse-directive
 >
 ----
-error: expected directive, got >
+error: parsing: expected directive, got >
 
 parse-directive
 hello foo>bar
 ----
-error: expected argument name, got >
+error: parsing: expected argument name, got >
 
 parse-directive
 hello foo=1 foo=2
 ----
-error: duplicate argument: foo
+error: parsing: duplicate argument: foo
