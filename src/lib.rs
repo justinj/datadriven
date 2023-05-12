@@ -434,7 +434,9 @@ enum Stanza {
 #[derive(Debug, Clone)]
 pub struct TestFile {
     stanzas: Vec<Stanza>,
-    filename: Option<String>,
+
+    /// The name of the file
+    pub filename: String,
 
     // failure gets set if a test failed during execution. We can't just return an error when that
     // happens, since the user is calling `run` from a closure, so we have to buffer up a failure
@@ -463,10 +465,13 @@ where
 impl TestFile {
     fn new(filename: &PathBuf) -> Result<Self, DataDrivenError> {
         let contents = fs::read_to_string(filename).map_err(DataDrivenError::Io)?;
-        let mut res =
+        let stanzas =
             Self::parse(&contents).map_err(|e| e.with_filename(filename.display().to_string()))?;
-        res.filename = Some(filename.to_string_lossy().to_string());
-        Ok(res)
+        Ok(TestFile {
+            stanzas,
+            filename: filename.to_string_lossy().to_string(),
+            failure: None,
+        })
     }
 
     /// Run each test in this file in sequence by calling `f` on it. If any test fails, execution
@@ -496,13 +501,7 @@ impl TestFile {
                         if result != case.expected {
                             self.failure = Some(format!(
                                 "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
-                                self.filename
-                                    .as_ref()
-                                    .unwrap_or(&"<unknown file>".to_string()),
-                                case.line_number,
-                                case.input,
-                                case.expected,
-                                result
+                                self.filename, case.line_number, case.input, case.expected, result
                             ));
                             // Yeah, ok, we're done here.
                             break;
@@ -511,12 +510,7 @@ impl TestFile {
                     Err(err) => {
                         self.failure = Some(format!(
                             "failure:\n{}:{}:\n{}\n{}",
-                            self.filename
-                                .as_ref()
-                                .unwrap_or(&"<unknown file>".to_string()),
-                            case.line_number,
-                            case.input,
-                            err
+                            self.filename, case.line_number, case.input, err
                         ));
                     }
                 }
@@ -545,10 +539,10 @@ impl TestFile {
             }
         }
         // TODO(justin): surface these errors somehow?
-        fs::write(self.filename.as_ref().unwrap(), s).unwrap();
+        fs::write(&self.filename, s).unwrap();
     }
 
-    fn parse(f: &str) -> Result<Self, DataDrivenError> {
+    fn parse(f: &str) -> Result<Vec<Stanza>, DataDrivenError> {
         let mut stanzas = vec![];
         let lines: Vec<&str> = f.lines().collect();
         let mut i = 0;
@@ -632,11 +626,8 @@ impl TestFile {
                 stanzas.push(Stanza::Comment("".to_string()));
             }
         }
-        Ok(TestFile {
-            stanzas,
-            filename: None,
-            failure: None,
-        })
+
+        Ok(stanzas)
     }
 }
 
@@ -708,9 +699,7 @@ impl TestFile {
                 if result != original_case.expected {
                     self.failure = Some(format!(
                         "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
-                        self.filename
-                            .as_ref()
-                            .unwrap_or(&"<unknown file>".to_string()),
+                        self.filename,
                         original_case.line_number,
                         original_case.input,
                         original_case.expected,
@@ -744,7 +733,7 @@ impl TestFile {
             }
         }
         // TODO(justin): surface these errors somehow?
-        fs::write(self.filename.as_ref().unwrap(), s).unwrap();
+        fs::write(&self.filename, s).unwrap();
     }
 }
 
