@@ -152,6 +152,27 @@ mod tests {
         });
     }
 
+    #[test]
+    fn filenames_correct() {
+        let mut filenames = std::collections::BTreeSet::from([
+            "tests/testdata/args".to_string(),
+            "tests/testdata/multiline".to_string(),
+            "tests/testdata/nonewline".to_string(),
+            "tests/testdata/unicode".to_string(),
+            "tests/testdata/nested/nested_file".to_string(),
+        ]);
+
+        walk("tests/testdata", |f| {
+            assert!(
+                filenames.remove(&f.filename),
+                "could not find {}",
+                f.filename
+            );
+        });
+
+        assert!(filenames.is_empty(), "missing filenames: {:?}", filenames);
+    }
+
     #[tokio::test]
     async fn run_async() {
         walk_async("tests/testdata_async", |mut f| async move {
