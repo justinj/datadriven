@@ -1,4 +1,4 @@
-use datadriven::{walk, walk_async};
+use datadriven::{walk, walk_async, walk_async_exclusive, walk_exclusive};
 
 #[cfg(test)]
 mod tests {
@@ -156,6 +156,7 @@ mod tests {
     fn filenames_correct() {
         let mut filenames = std::collections::BTreeSet::from([
             "tests/testdata/args".to_string(),
+            "tests/testdata/excluded".to_string(),
             "tests/testdata/multiline".to_string(),
             "tests/testdata/nonewline".to_string(),
             "tests/testdata/unicode".to_string(),
@@ -173,6 +174,16 @@ mod tests {
         assert!(filenames.is_empty(), "missing filenames: {:?}", filenames);
     }
 
+    #[test]
+    fn walk_excluded() {
+        let excluded = walk_exclusive(
+            "tests/testdata",
+            |_| (),
+            |f| f.filename.contains("excluded"),
+        );
+        assert_eq!(excluded, 1);
+    }
+
     #[tokio::test]
     async fn run_async() {
         walk_async("tests/testdata_async", |mut f| async move {
@@ -186,5 +197,25 @@ mod tests {
             f
         })
         .await;
+    }
+
+    #[tokio::test]
+    async fn run_async_exclusive() {
+        let excluded = walk_async_exclusive(
+            "tests/testdata_async",
+            |mut f| async move {
+                f.run_async(|s| async move {
+                    let mut result = String::new();
+                    result.push_str(s.input.trim());
+                    result.push('\n');
+                    result
+                })
+                .await;
+                f
+            },
+            |f| f.filename.contains("excluded"),
+        )
+        .await;
+        assert_eq!(excluded, 1);
     }
 }

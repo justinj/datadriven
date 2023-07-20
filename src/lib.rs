@@ -264,6 +264,56 @@ where
     }
 }
 
+/// The same as `walk` but accepts an additional matcher to exclude matching files from being
+/// tested.
+///
+/// Returns the number of excluded files.
+pub fn walk_exclusive<F, M>(dir: &str, mut f: F, exclusion_matcher: M) -> usize
+where
+    F: FnMut(&mut TestFile),
+    M: Fn(&TestFile) -> bool,
+{
+    let mut file_prefix = PathBuf::from(dir);
+    if let Ok(p) = env::var("RUN") {
+        file_prefix = file_prefix.join(p);
+    }
+
+    // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
+    let mut failures = Vec::new();
+
+    let mut excluded = 0;
+    let mut run = |file| {
+        let mut tf = TestFile::new(&file).unwrap();
+        if exclusion_matcher(&tf) {
+            excluded += 1;
+            return;
+        }
+        f(&mut tf);
+        if let Some(fail) = tf.failure {
+            failures.push(fail);
+        }
+    };
+
+    if file_prefix.is_dir() {
+        for file in test_files(PathBuf::from(dir)).unwrap() {
+            run(file);
+        }
+    } else if file_prefix.exists() {
+        run(file_prefix);
+    }
+
+    if !failures.is_empty() {
+        let mut msg = String::new();
+        for f in failures {
+            msg.push_str(&f);
+            msg.push('\n');
+        }
+        panic!("{}", msg);
+    }
+
+    excluded
+}
+
 // Ignore files named .XXX, XXX~ or #XXX#.
 fn should_ignore_file(name: &str) -> bool {
     name.starts_with('.') || name.ends_with('~') || name.starts_with('#') && name.ends_with('#')
@@ -648,15 +698,34 @@ fn file_list(dir: &str) -> Vec<PathBuf> {
 
 /// The async equivalent of `walk`. Must return the passed `TestFile`.
 #[cfg(feature = "async")]
-pub async fn walk_async<F, T>(dir: &str, mut f: F)
+pub async fn walk_async<F, T>(dir: &str, f: F)
 where
     F: FnMut(TestFile) -> T,
     T: Future<Output = TestFile>,
 {
+    walk_async_exclusive(dir, f, |_| false).await;
+}
+
+/// The same as `walk_async` but accepts an additional matcher to exclude matching files from being
+/// tested.
+///
+/// Returns the number of excluded files.
+#[cfg(feature = "async")]
+pub async fn walk_async_exclusive<F, T, M>(dir: &str, mut f: F, exclusion_matcher: M) -> usize
+where
+    F: FnMut(TestFile) -> T,
+    T: Future<Output = TestFile>,
+    M: Fn(&TestFile) -> bool,
+{
     // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
     let mut failures = Vec::new();
+    let mut excluded = 0;
     for file in file_list(dir) {
         let tf = TestFile::new(&file).unwrap();
+        if exclusion_matcher(&tf) {
+            excluded += 1;
+            continue;
+        }
         let tf = f(tf).await;
         if let Some(fail) = tf.failure {
             failures.push(fail);
@@ -671,6 +740,8 @@ where
         }
         panic!("{}", msg);
     }
+
+    excluded
 }
 
 #[cfg(feature = "async")]
