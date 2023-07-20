@@ -235,9 +235,7 @@ where
 
 /// The same as `walk` but accepts an additional matcher to exclude matching files from being
 /// tested.
-///
-/// Returns the number of excluded files.
-pub fn walk_exclusive<F, M>(dir: &str, mut f: F, exclusion_matcher: M) -> usize
+pub fn walk_exclusive<F, M>(dir: &str, mut f: F, exclusion_matcher: M)
 where
     F: FnMut(&mut TestFile),
     M: Fn(&TestFile) -> bool,
@@ -250,11 +248,9 @@ where
     // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
     let mut failures = Vec::new();
 
-    let mut excluded = 0;
     let mut run = |file| {
         let mut tf = TestFile::new(&file).unwrap();
         if exclusion_matcher(&tf) {
-            excluded += 1;
             return;
         }
         f(&mut tf);
@@ -279,8 +275,6 @@ where
         }
         panic!("{}", msg);
     }
-
-    excluded
 }
 
 // Ignore files named .XXX, XXX~ or #XXX#.
@@ -677,10 +671,8 @@ where
 
 /// The same as `walk_async` but accepts an additional matcher to exclude matching files from being
 /// tested.
-///
-/// Returns the number of excluded files.
 #[cfg(feature = "async")]
-pub async fn walk_async_exclusive<F, T, M>(dir: &str, mut f: F, exclusion_matcher: M) -> usize
+pub async fn walk_async_exclusive<F, T, M>(dir: &str, mut f: F, exclusion_matcher: M)
 where
     F: FnMut(TestFile) -> T,
     T: Future<Output = TestFile>,
@@ -688,11 +680,9 @@ where
 {
     // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
     let mut failures = Vec::new();
-    let mut excluded = 0;
     for file in file_list(dir) {
         let tf = TestFile::new(&file).unwrap();
         if exclusion_matcher(&tf) {
-            excluded += 1;
             continue;
         }
         let tf = f(tf).await;
@@ -709,8 +699,6 @@ where
         }
         panic!("{}", msg);
     }
-
-    excluded
 }
 
 #[cfg(feature = "async")]
