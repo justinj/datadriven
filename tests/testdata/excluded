@@ -1,0 +1,4 @@
+replicate times=4
+foo
+----
+foofoofoofoo

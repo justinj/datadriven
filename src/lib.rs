@@ -226,9 +226,19 @@ impl TestCase {
 }
 
 /// Walk a directory for test files and run each one as a test.
-pub fn walk<F>(dir: &str, mut f: F)
+pub fn walk<F>(dir: &str, f: F)
 where
     F: FnMut(&mut TestFile),
+{
+    walk_exclusive(dir, f, |_| false);
+}
+
+/// The same as `walk` but accepts an additional matcher to exclude matching files from being
+/// tested.
+pub fn walk_exclusive<F, M>(dir: &str, mut f: F, exclusion_matcher: M)
+where
+    F: FnMut(&mut TestFile),
+    M: Fn(&TestFile) -> bool,
 {
     let mut file_prefix = PathBuf::from(dir);
     if let Ok(p) = env::var("RUN") {
@@ -240,6 +250,9 @@ where
 
     let mut run = |file| {
         let mut tf = TestFile::new(&file).unwrap();
+        if exclusion_matcher(&tf) {
+            return;
+        }
         f(&mut tf);
         if let Some(fail) = tf.failure {
             failures.push(fail);
@@ -648,15 +661,30 @@ fn file_list(dir: &str) -> Vec<PathBuf> {
 
 /// The async equivalent of `walk`. Must return the passed `TestFile`.
 #[cfg(feature = "async")]
-pub async fn walk_async<F, T>(dir: &str, mut f: F)
+pub async fn walk_async<F, T>(dir: &str, f: F)
 where
     F: FnMut(TestFile) -> T,
     T: Future<Output = TestFile>,
+{
+    walk_async_exclusive(dir, f, |_| false).await;
+}
+
+/// The same as `walk_async` but accepts an additional matcher to exclude matching files from being
+/// tested.
+#[cfg(feature = "async")]
+pub async fn walk_async_exclusive<F, T, M>(dir: &str, mut f: F, exclusion_matcher: M)
+where
+    F: FnMut(TestFile) -> T,
+    T: Future<Output = TestFile>,
+    M: Fn(&TestFile) -> bool,
 {
     // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
     let mut failures = Vec::new();
     for file in file_list(dir) {
         let tf = TestFile::new(&file).unwrap();
+        if exclusion_matcher(&tf) {
+            continue;
+        }
         let tf = f(tf).await;
         if let Some(fail) = tf.failure {
             failures.push(fail);
