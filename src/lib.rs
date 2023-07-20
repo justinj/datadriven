@@ -226,42 +226,11 @@ impl TestCase {
 }
 
 /// Walk a directory for test files and run each one as a test.
-pub fn walk<F>(dir: &str, mut f: F)
+pub fn walk<F>(dir: &str, f: F)
 where
     F: FnMut(&mut TestFile),
 {
-    let mut file_prefix = PathBuf::from(dir);
-    if let Ok(p) = env::var("RUN") {
-        file_prefix = file_prefix.join(p);
-    }
-
-    // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
-    let mut failures = Vec::new();
-
-    let mut run = |file| {
-        let mut tf = TestFile::new(&file).unwrap();
-        f(&mut tf);
-        if let Some(fail) = tf.failure {
-            failures.push(fail);
-        }
-    };
-
-    if file_prefix.is_dir() {
-        for file in test_files(PathBuf::from(dir)).unwrap() {
-            run(file);
-        }
-    } else if file_prefix.exists() {
-        run(file_prefix);
-    }
-
-    if !failures.is_empty() {
-        let mut msg = String::new();
-        for f in failures {
-            msg.push_str(&f);
-            msg.push('\n');
-        }
-        panic!("{}", msg);
-    }
+    walk_exclusive(dir, f, |_| false);
 }
 
 /// The same as `walk` but accepts an additional matcher to exclude matching files from being
