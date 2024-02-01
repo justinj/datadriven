@@ -5,3 +5,9 @@ hello
 hello
 ----
 ---- (no newline)
+
+echo
+----
+
+strip-newline
+----

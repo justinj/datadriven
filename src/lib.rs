@@ -461,7 +461,10 @@ fn write_result<W>(w: &mut W, s: String)
 where
     W: Write,
 {
-    if !s.ends_with('\n') {
+    // Special annoying case since the blank line will be parsed as a comment.
+    if s.is_empty() || s == "\n" {
+        w.write_str("----\n").unwrap();
+    } else if !s.ends_with('\n') {
         w.write_str("----\n----\n").unwrap();
         w.write_str(&s).unwrap();
         w.write_str("\n----\n---- (no newline)\n").unwrap();

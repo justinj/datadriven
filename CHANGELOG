@@ -1,3 +1,7 @@
+# 0.8.0
+
+* Fixed rewrites when a test case has empty output.
+
 # 0.7.0
 
 * When outputs don't end in a newline, they will now be surrounded with double
