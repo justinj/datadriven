@@ -704,7 +704,7 @@ where
     }
 }
 
-/// The same as `walk_async` but allows for you to specify the number of concurrent tests to run.
+/// The same as `walk_async` but can run `concurrent` files in parallel.
 #[cfg(feature = "async")]
 pub async fn walk_async_concurrent<F, T>(dir: &str, concurrency: usize, f: F)
 where
@@ -714,8 +714,7 @@ where
     walk_async_concurrent_exclusive(dir, concurrency, f, |_| false).await;
 }
 
-/// The same as `walk_async` but accepts an additional matcher to exclude matching files from being
-/// tested.
+/// The same as `walk_async_exclusive` but can run `concurrent` files in parallel.
 #[cfg(feature = "async")]
 pub async fn walk_async_concurrent_exclusive<F, T, M>(
     dir: &str,
@@ -729,9 +728,7 @@ pub async fn walk_async_concurrent_exclusive<F, T, M>(
 {
     use futures::StreamExt;
 
-    // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
-    let mut failures = Vec::new();
-
+    // Create futures list so that we can execute them in parallel
     let mut futures = futures::stream::iter(file_list(dir).into_iter().filter_map(|file| {
         let tf = TestFile::new(&file).unwrap();
         if exclusion_matcher(&tf) {
@@ -740,6 +737,9 @@ pub async fn walk_async_concurrent_exclusive<F, T, M>(
         Some(f(tf))
     }))
     .buffered(concurrency);
+
+    // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
+    let mut failures = Vec::new();
 
     while let Some(tf) = futures.next().await {
         if let Some(fail) = tf.failure {
