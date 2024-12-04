@@ -704,6 +704,59 @@ where
     }
 }
 
+/// The same as `walk_async` but can run `concurrent` files in parallel.
+#[cfg(feature = "async")]
+pub async fn walk_async_concurrent<F, T>(dir: &str, concurrency: usize, f: F)
+where
+    F: FnMut(TestFile) -> T,
+    T: Future<Output = TestFile>,
+{
+    walk_async_concurrent_exclusive(dir, concurrency, f, |_| false).await;
+}
+
+/// The same as `walk_async_exclusive` but can run `concurrent` files in parallel.
+#[cfg(feature = "async")]
+pub async fn walk_async_concurrent_exclusive<F, T, M>(
+    dir: &str,
+    concurrency: usize,
+    mut f: F,
+    exclusion_matcher: M,
+) where
+    F: FnMut(TestFile) -> T,
+    T: Future<Output = TestFile>,
+    M: Fn(&TestFile) -> bool,
+{
+    use futures::StreamExt;
+
+    // Create futures list so that we can execute them in parallel
+    let mut futures = futures::stream::iter(file_list(dir).into_iter().filter_map(|file| {
+        let tf = TestFile::new(&file).unwrap();
+        if exclusion_matcher(&tf) {
+            return None;
+        }
+        Some(f(tf))
+    }))
+    .buffered(concurrency);
+
+    // Accumulate failures until the end since Rust doesn't let us "fail but keep going" in a test.
+    let mut failures = Vec::new();
+
+    while let Some(tf) = futures.next().await {
+        if let Some(fail) = tf.failure {
+            failures.push(fail);
+        }
+    }
+
+    if !failures.is_empty() {
+        let mut msg = String::new();
+        for f in failures {
+            msg.push_str(&f);
+            msg.push('\n');
+        }
+        panic!("{}", msg);
+    }
+}
+
 #[cfg(feature = "async")]
 impl TestFile {
     /// The async equivalent of `run`.
@@ -787,5 +840,25 @@ mod tests {
                 }
             });
         });
+    }
+
+    // That's async dogfooding baby!
+    #[cfg(feature = "async")]
+    #[tokio::test]
+    async fn parse_directive_async() {
+        walk_async_concurrent("tests/parsing", 4, |mut f| async {
+            f.run(|s| -> String {
+                match DirectiveParser::new(s.input.trim()).parse_directive() {
+                    Ok((directive, mut args)) => {
+                        let mut sorted_args = args.drain().collect::<Vec<(String, Vec<String>)>>();
+                        sorted_args.sort_by(|a, b| a.0.cmp(&b.0));
+                        format!("directive: {}\nargs: {:?}\n", directive, sorted_args)
+                    }
+                    Err(err) => format!("error: {}\n", err),
+                }
+            });
+            f
+        })
+        .await;
     }
 }
