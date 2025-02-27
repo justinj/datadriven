@@ -514,7 +514,7 @@ impl TestFile {
                 let result = f(case);
                 match result.result() {
                     Ok(result) => {
-                        if result != case.expected {
+                        if !result_matches(&case.expected, &result) {
                             self.failure = Some(format!(
                                 "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
                                 self.filename, case.line_number, case.input, case.expected, result
@@ -757,6 +757,12 @@ pub async fn walk_async_concurrent_exclusive<F, T, M>(
     }
 }
 
+// Checks if the result matches the expected output, taking into account the
+// special case where the expected output is a blank line.
+fn result_matches(expected: &str, result: &str) -> bool {
+    result == expected || (expected.is_empty() && result == "\n")
+}
+
 #[cfg(feature = "async")]
 impl TestFile {
     /// The async equivalent of `run`.
@@ -780,7 +786,7 @@ impl TestFile {
             if let Stanza::Test(case) = stanza {
                 let original_case = case.clone();
                 let result = f(case).await;
-                if result != original_case.expected {
+                if !result_matches(&original_case.expected, &result) {
                     self.failure = Some(format!(
                         "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
                         self.filename,
