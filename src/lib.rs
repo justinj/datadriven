@@ -519,8 +519,6 @@ impl TestFile {
                                 "failure:\n{}:{}:\n{}\nexpected:\n{}\nactual:\n{}",
                                 self.filename, case.line_number, case.input, case.expected, result
                             ));
-                            // Yeah, ok, we're done here.
-                            break;
                         }
                     }
                     Err(err) => {
@@ -529,6 +527,9 @@ impl TestFile {
                             self.filename, case.line_number, case.input, err
                         ));
                     }
+                }
+                if self.failure.is_some() {
+                    break;
                 }
             }
         }

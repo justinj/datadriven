@@ -154,6 +154,24 @@ mod tests {
     }
 
     #[test]
+    fn test_failing_occurs_on_first_failure() {
+        match std::panic::catch_unwind(|| walk("tests/testdata_failing", |f| {
+            f.run(|s| {
+                if s.directive == "fail" {
+                    bail!("oh no!");
+                }
+                Ok(s.input.trim().to_string())
+            })
+        })) {
+            Ok(_) => panic!("expected panic"),
+            Err(err) => {
+                let err = err.downcast_ref::<String>().unwrap();
+                assert!(err.contains("first failure"));
+            }
+        }
+    }
+
+    #[test]
     fn filenames_correct() {
         let mut filenames = std::collections::BTreeSet::from([
             "tests/testdata/args".to_string(),
